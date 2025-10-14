@@ -9,7 +9,7 @@ from max_camera_localizer.geometric_functions import rvec_to_quat, transform_ori
 transform_points_world_to_img, transform_point_world_to_cam
 from max_camera_localizer.detection_functions import detect_markers, detect_color_blobs, estimate_pose, \
     identify_objects_from_blobs, attempt_recovery_for_missing_objects
-from max_camera_localizer.object_frame_definitions import define_jenga_contacts, define_jenga_contour, hard_define_contour
+from max_camera_localizer.object_frame_definitions import define_jenga_contour, hard_define_contour
 from max_camera_localizer.drawing_functions import draw_text, draw_object_lines
 import threading
 import rclpy
@@ -71,8 +71,8 @@ def parse_args():
                         help="Prevents console prints. Otherwise, prints object positions in both camera frame and base frame.")
     parser.add_argument("--no-pushers", action='store_true',
                         help="Stops detecting yellow and green pushers")
-    parser.add_argument("--recommend-push", action='store_true',
-                        help="For each object, recommend where to push")
+    parser.add_argument("--recommend-push", type=str, default="none",
+                        help="none = Don't recommend; lfd = Learning from Demonstration, pso = allocation-based")
     return parser.parse_args()
 
 def pick_closest_blob(blobs, last_position):
@@ -108,7 +108,7 @@ def main():
             return
 
     talk = not args.suppress_prints
-    if args.recommend_push:
+    if args.recommend_push == "lfd":
         from max_camera_localizer.data_predict import predict_pusher_outputs
 
     cap = cv2.VideoCapture(cam_id)
@@ -127,7 +127,6 @@ def main():
     detected_objects = []
     last_pushers = {"green": None, "yellow": None}
     unconfirmed_blobs = {"green": None, "yellow": None}
-    unconfirmed_blobs = {"green": None, "yellow": None}
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -139,6 +138,7 @@ def main():
         identified_jenga = []
         ee_pos, ee_quat = bridge_node.get_ee_pose()
         cam_pos, cam_quat = bridge_node.get_camera_pose()
+        push_point_xyxy = bridge_node.allocation_pushers_xyxy
 
         # Aruco Section
         corners, ids = detect_markers(frame, gray, ARUCO_DICTS, parameters)
@@ -152,7 +152,6 @@ def main():
                 rquat = rvec_to_quat(rvec)
                 world_pos = transform_point_cam_to_world(tvec, cam_pos, cam_quat)
                 world_rot = transform_orientation_cam_to_world(rquat, cam_quat)
-                world_contacts = define_jenga_contacts(world_pos, world_rot, BLOCK_WIDTH, BLOCK_LENGTH, BLOCK_THICKNESS)
                 world_contour = define_jenga_contour(world_pos, world_rot)
                 identified_jenga.append({
                                     "name": f"jenga_{marker_id}",
@@ -160,7 +159,6 @@ def main():
                                     "position": world_pos,
                                     "quaternion": world_rot,
                                     'inferred': False,
-                                    "contacts": world_contacts,
                                     "contour": world_contour
                                 })
 
@@ -244,14 +242,15 @@ def main():
                 if not any(obj["name"] == rec["name"] for obj in identified_objects):
                     identified_objects.append(rec)
 
-        # Bonus: For the ML test run, predict where the pushers should go
+        # Draw target and contour
+        color = (255, 255, 0)
         for obj in identified_objects+identified_jenga:
-            color = (255, 255, 0)
             name = obj["name"]
             if "jenga" in name:
                 name = "jenga"
             if name in ["allen_key", "wrench", "jenga"]:
-                if args.recommend_push:
+                # Bonus: For the ML test run, predict where the pushers should go
+                if args.recommend_push == "lfd":
                     posex = obj["position"][0]
                     posey = obj["position"][1]
                     objquat = obj["quaternion"]
@@ -259,6 +258,7 @@ def main():
                     oriy = objeuler[2]
                     prediction = predict_pusher_outputs(name, posex, posey, oriy, TARGET_POSES[name])
                     index = prediction['predicted_index']
+                    print(index)
 
                     # Draw predicted points (of the one or two given)
                     recommended = []
@@ -280,10 +280,26 @@ def main():
                         recommended.append(recommended[0])
                     
                     bridge_node.publish_recommended_contacts(recommended)
+                elif args.recommend_push == "pso" and len(push_point_xyxy) == 4:
+                    pp_world_xyz = [[push_point_xyxy[0], push_point_xyxy[1], 0.0],
+                                    [push_point_xyxy[2], push_point_xyxy[3], 0.0]]
+                    recommended = []
+                    for pp_xyz in pp_world_xyz:
+                        pp_img = transform_points_world_to_img([pp_xyz], cam_pos, cam_quat, CAMERA_MATRIX)
+                        label = f"pusher recommended @ ({1000*pp_xyz[0]:.0f}, {1000*pp_xyz[1]:.0f})"
+                        (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                        cv2.rectangle(frame, (pp_img[0][0] - 20,     pp_img[0][1] - h - 20 - 5), 
+                                             (pp_img[0][0] + w - 20, pp_img[0][1] - 20 + 5), (0, 0, 0), -1)
+                        cv2.putText(frame, label, (pp_img[0][0] - 20, pp_img[0][1] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-                # draw target
+                        cv2.circle(frame, pp_img[0], 5, color)
+                        recommended.append([pp_xyz, np.array([0.0, 0.0, 1.0])])
+                    bridge_node.publish_recommended_contacts(recommended)
+
+
+
+                # Draw target contour
                 target_contour = hard_define_contour(TARGET_POSES[name][0], TARGET_POSES[name][1], name)
-                # Draw low-res Contour
                 contour_xyz = target_contour["xyz"]
                 contour_img = transform_points_world_to_img(contour_xyz, cam_pos, cam_quat, CAMERA_MATRIX)
                 contour_img = np.array(contour_img)
@@ -295,6 +311,10 @@ def main():
         bridge_node.publish_camera_pose(cam_pos, cam_quat)
         bridge_node.publish_object_poses(identified_objects+identified_jenga)
         bridge_node.publish_contacts(nearest_pushers)
+        all_objects = identified_objects+identified_jenga
+        if all_objects:
+            selected_object = all_objects[0]
+            bridge_node.publish_contour(selected_object['contour']['xyz'])
         draw_text(frame, cam_pos, cam_quat, identified_objects+identified_jenga, frame_idx, ee_pos, ee_quat)
         draw_object_lines(frame, CAMERA_MATRIX, cam_pos, cam_quat, identified_objects+identified_jenga, nearest_pushers)
 

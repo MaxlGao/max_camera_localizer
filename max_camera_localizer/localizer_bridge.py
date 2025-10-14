@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, Pose, Vector3Stamped, PointStamped, Point
-from std_msgs.msg import Header, ColorRGBA, Int32
+from std_msgs.msg import Header, ColorRGBA, Int32, Float32MultiArray
 from max_camera_msgs.msg import PusherInfo
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -27,24 +27,31 @@ class LocalizerBridge(Node):
             self.ee_pose_callback,
             10)
         self.get_logger().info("TCPSubscriber node started.")
+        self.allocation_contacts_sub = self.create_subscription(
+            Float32MultiArray, "/allocation/push_points", self.push_point_callback, 10)
+        self.allocation_pushers_xyxy = []
+
 
         # --- Publishers ---
         self.cam_pose_pub = self.create_publisher(PoseStamped, '/camera_pose', 10)
         self.object_publishers = {}
-        # self.contact_position_publishers = {}  # { object_name: { idx: publisher } }
-        # self.contact_normal_publishers = {}    # { object_name: { idx: publisher } }
         self.pusher_publishers = {}
         self.frame_num_publsher = self.create_publisher(Int32, '/camera_frame_number', 10)
         self.recommended_publishers = {"pusher_1_position": self.create_publisher(PointStamped, '/recommended_pusher_1/position', 10), 
                                        "pusher_2_position": self.create_publisher(PointStamped, '/recommended_pusher_2/position', 10),
                                        "pusher_1_normal": self.create_publisher(Vector3Stamped, '/recommended_pusher_1/normal', 10), 
                                        "pusher_2_normal": self.create_publisher(Vector3Stamped, '/recommended_pusher_2/normal', 10)}
+        self.contour_publisher = self.create_publisher(Float32MultiArray, '/vision/boundary_points', 10)
 
     def ee_pose_callback(self, msg: PoseStamped):
         with self.lock:
             self.ee_position = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
             self.ee_quat = np.array([msg.pose.orientation.x, msg.pose.orientation.y,
                                      msg.pose.orientation.z, msg.pose.orientation.w])
+
+    def push_point_callback(self, msg: Float32MultiArray):
+        print(f"Got Push points {msg.data}")
+        self.allocation_pushers_xyxy = msg.data
 
     def get_ee_pose(self):
         return self.ee_position, self.ee_quat
@@ -72,7 +79,6 @@ class LocalizerBridge(Node):
             name = obj["name"]
             pos = obj["position"]
             quat = obj["quaternion"]
-            # contacts = obj["contacts"]
 
             p = Pose()
             p.position.x, p.position.y, p.position.z = pos
@@ -88,39 +94,9 @@ class LocalizerBridge(Node):
             pose_msg.header.frame_id = "base"
             pose_msg.pose = p
             self.object_publishers[name].publish(pose_msg)
-            
-            # # Temporarily disabled
-            # for idx, position, normal in contacts:
-            #     # Initialize nested dicts if needed
-            #     if name not in self.contact_position_publishers:
-            #         self.contact_position_publishers[name] = {}
-            #         self.contact_normal_publishers[name] = {}
-
-            #     # Create publishers if not already created
-            #     if idx not in self.contact_position_publishers[name]:
-            #         pos_topic = f'/object_poses/{name}/contacts/c_{idx}/position'
-            #         norm_topic = f'/object_poses/{name}/contacts/c_{idx}/normal'
-            #         self.contact_position_publishers[name][idx] = self.create_publisher(PointStamped, pos_topic, 10)
-            #         self.contact_normal_publishers[name][idx] = self.create_publisher(Vector3Stamped, norm_topic, 10)
-            #         self.get_logger().info(f"Created contact publishers for object {name}, contact {idx}")
-
-            #     # Publish position
-            #     pos_msg = PointStamped()
-            #     pos_msg.header.stamp = now
-            #     pos_msg.header.frame_id = "base"
-            #     pos_msg.point.x, pos_msg.point.y, pos_msg.point.z = position
-            #     self.contact_position_publishers[name][idx].publish(pos_msg)
-
-            #     # Publish normal
-            #     norm_msg = Vector3Stamped()
-            #     norm_msg.header.stamp = now
-            #     norm_msg.header.frame_id = "base"
-            #     norm_msg.vector.x, norm_msg.vector.y, norm_msg.vector.z = normal
-            #     self.contact_normal_publishers[name][idx].publish(norm_msg)
 
     def publish_contacts(self, pushers):
         now = self.get_clock().now().to_msg()
-
 
         for pusher in pushers:
             msg = PusherInfo()
@@ -181,3 +157,12 @@ class LocalizerBridge(Node):
         norm_2_msg.header.frame_id = "base"
         norm_2_msg.vector.x, norm_2_msg.vector.y, norm_2_msg.vector.z = norm_2
         self.recommended_publishers["pusher_2_normal"].publish(norm_2_msg)
+
+    def publish_contour(self, contour: np.ndarray):
+        contour_xyz = contour # shape: (N, 3)
+        contour_xy = contour_xyz[:,:2] # clip out z column
+        contour_xy = contour_xy.ravel()
+        contour_xy_lis = contour_xy.tolist()
+        contour_msg = Float32MultiArray()
+        contour_msg.data = contour_xy_lis
+        self.contour_publisher.publish(contour_msg)

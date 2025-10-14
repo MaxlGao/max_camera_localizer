@@ -187,9 +187,6 @@ def remove_bad_pushes(rows):
 
 for object_name, pose_topic in zip(object_names, pose_topics):
     bag_dir = parent_folder + object_name
-
-    # bag_dir = "/media/max/OS/Users/maxlg/Desktop/==RISELABS/Pusher Data Batch 3/jenga"
-    # pose_topic = "/object_poses/jenga_3"
     target_pose = TARGET_POSES[object_name] # (position mm), (orientation degrees)
     (targ_x, targ_y, _), (_, _, targ_yw) = target_pose
     targ_x, targ_y = targ_x*.001, targ_y*.001
@@ -268,9 +265,6 @@ for object_name, pose_topic in zip(object_names, pose_topics):
                     ])
             else:
                 print(f"Unsupported message type: {type_str}")
-
-        # print(f"Exported decoded messages from {topic} to {out_path}")
-
     conn.close()
 
 

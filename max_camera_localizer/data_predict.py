@@ -80,6 +80,7 @@ def predict_pusher_outputs(name, pose_x, pose_y, ori_y, target_pose):
     sample = pd.DataFrame([[distance, disp_ang, d_yw]], columns=input_cols)
 
     pusher_type = model['classifier'].predict(sample)[0]
+    print(pusher_type)
     
     if pusher_type == 0:
         index_value = model['clf_one'].predict(sample)[0]
