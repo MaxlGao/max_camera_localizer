@@ -136,3 +136,84 @@ def draw_object_lines(frame, camera_matrix, cam_pos, cam_quat, identified_object
         cv2.arrowedLine(frame, pusher_point_img[0], contour_point_img[0], nearest_pusher["color"], 2, tipLength=0.3)
 
     return frame
+
+def draw_wrench(frame, cam_quat, wrench, scale=40, position=(0.85, 0.15)):
+    """
+    Draw a 2D representation of a wrench (force + torque) in the top-right corner of the image.
+
+    Args:
+        frame: OpenCV image.
+        wrench: array 'fx', 'fy', 'tz'  (linear x, linear y, angular z)
+        scale: scaling factor for arrow length visualization.
+        position: normalized position (x_frac, y_frac) for wrench origin (in image coords).
+    """
+    h, w = frame.shape[:2]
+    cx = int(w * position[0]) - 50
+    cy = int(h * position[1])
+
+    fx = wrench[0]
+    fy = wrench[1]
+    tz = wrench[2]
+
+    # === Transform base-frame directions into camera frame ===
+    # Define unit vectors in base frame
+    x_dir_world = np.array([1, 0, 0])
+    y_dir_world = np.array([0, 1, 0])
+
+    # Rotation: world -> camera
+    R_cam = R.from_quat(cam_quat)
+    R_world_to_cam = R_cam.inv()
+
+    # Transform into camera coordinates
+    x_cam = R_world_to_cam.apply(x_dir_world)
+    y_cam = R_world_to_cam.apply(y_dir_world)
+
+    # Project into image plane: we take x,y components of the camera axes
+    x_vec_2d = x_cam[:2]
+    y_vec_2d = y_cam[:2]
+
+    # Normalize for consistent display
+    if np.linalg.norm(x_vec_2d) > 1e-6:
+        x_vec_2d /= np.linalg.norm(x_vec_2d)
+    if np.linalg.norm(y_vec_2d) > 1e-6:
+        y_vec_2d /= np.linalg.norm(y_vec_2d)
+
+    # Compute arrow endpoints
+    arrow_len_x = int(scale * fx)
+    arrow_len_y = int(scale * fy)
+
+    end_fx = (int(cx + arrow_len_x * x_vec_2d[0]), int(cy + arrow_len_x * x_vec_2d[1]))
+    end_fy = (int(cx + arrow_len_y * y_vec_2d[0]), int(cy + arrow_len_y * y_vec_2d[1]))
+
+    # === Draw visualization ===
+    color_fx = (0, 0, 255)   # Red
+    color_fy = (0, 255, 0)   # Green
+    color_tz = (255, 0, 0)   # Blue
+
+    # Draw arrows
+    cv2.arrowedLine(frame, (cx, cy), end_fx, color_fx, 2, tipLength=0.3)
+    cv2.arrowedLine(frame, (cx, cy), end_fy, color_fy, 2, tipLength=0.3)
+
+    # Draw torque (tz) as a curved arrow (screen-space, not orientation-dependent)
+    radius = 20
+    start_angle = 0
+    end_angle = int(-np.sign(tz) * 270)
+    cv2.ellipse(frame, (cx, cy), (radius, radius), 0, start_angle, end_angle, color_tz, 2)
+    if tz != 0:
+        angle_rad = np.deg2rad(end_angle)
+        end_x = int(cx + radius * np.cos(angle_rad))
+        end_y = int(cy + radius * np.sin(angle_rad))
+        cv2.arrowedLine(frame, (end_x, end_y), (end_x + scale//4, end_y), color_tz, 2, tipLength=1.0)
+
+
+    # Labels
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(frame, f"Fx={fx:.2f}", (cx + 50, cy - 40), font, 0.6, color_fx, 2)
+    cv2.putText(frame, f"Fy={fy:.2f}", (cx + 50, cy     ), font, 0.6, color_fy, 2)
+    cv2.putText(frame, f"Tz={tz:.2f}", (cx + 50, cy + 40), font, 0.6, color_tz, 2)
+
+    # Title box
+    cv2.rectangle(frame, (cx - 60, cy - 60), (cx + 150, cy + 60), (50, 50, 50), 2)
+    cv2.putText(frame, "Desired Wrench", (cx - 50, cy - 65), font, 0.6, (200, 200, 200), 2)
+
+    return frame

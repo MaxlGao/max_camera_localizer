@@ -32,7 +32,8 @@ setup(
     entry_points={
         'console_scripts': [
             'localize = max_camera_localizer.merged_localization:main',
-            'allocate = max_camera_localizer.control_allocation_node:main'
+            'allocate = max_camera_localizer.control_allocation_node:main',
+            'test = max_camera_localizer.test_camera:main'
         ],
     },
 )

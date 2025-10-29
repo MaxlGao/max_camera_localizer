@@ -6,7 +6,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
-from geometry_msgs.msg import TwistStamped
+from geometry_msgs.msg import TwistStamped, PoseStamped
 
 # ---- Dependencies for optimization ----
 import cvxpy as cp
@@ -56,6 +56,7 @@ def pso_wrench_cost_python(s, delta, bx, by, w_d, theta, f_mag, lam, lam_min, la
     """
     Implements MATLAB pso_wrench_cost in Python with cvxpy (OSQP).
     """
+    debug_info = {}
     # Format points, span
     s  = float(s)
     s2 = (s + float(delta)) % 1.0
@@ -65,9 +66,14 @@ def pso_wrench_cost_python(s, delta, bx, by, w_d, theta, f_mag, lam, lam_min, la
     d  = p2 - p1
     dist = np.linalg.norm(d)
     if dist < lam_min or dist > lam_max:
-        print("Lambda Fault!")
-        print(dist)
-        return 1e6
+        return 1e6, debug_info
+
+    debug_info['s'] = s
+    debug_info['delta'] = delta
+    debug_info['s2'] = s2
+    debug_info['p1'] = p1.copy()
+    debug_info['p2'] = p2.copy()
+    debug_info['span_dist'] = dist
 
     # Friction directions from span
     d_unit = d / (dist + 1e-12)
@@ -84,26 +90,42 @@ def pso_wrench_cost_python(s, delta, bx, by, w_d, theta, f_mag, lam, lam_min, la
     w22 = np.array([f2_2[0], f2_2[1], lam * cross2d_z(p2, f2_2)])
     W   = np.column_stack([w11, w12, w21, w22])  # 3x4
 
-    a = cp.Variable(4, nonneg=True)
+
+    debug_info['W'] = W.copy()
+    debug_info['w_d'] = w_d.copy()
+
+    # a = cp.Variable(4, nonneg=True)
+    a = np.array([1., 1., 1., 1.])
     A = np.array([[1., 1., 0., 0.],
                   [0., 0., 1., 1.]])
     b = np.array([1., 1.])
-    obj = cp.Minimize(cp.sum_squares(W @ a - w_d))
-    prob = cp.Problem(obj, [A @ a <= b])
+    # obj = cp.Minimize(cp.sum_squares(W @ a - w_d))
+    # prob = cp.Problem(obj, [A @ a <= b])
 
-    try:
-        prob.solve(solver=cp.OSQP, warm_start=True, eps_abs=1e-5, eps_rel=1e-5, verbose=False)
-    except Exception:
-        print("Solver Fault!")
-        return 1e6
+    # try:
+    #     prob.solve(solver=cp.OSQP, warm_start=True, eps_abs=1e-5, eps_rel=1e-5, verbose=False)
+    # except Exception:
+    #     return 1e6, debug_info
 
-    if a.value is None or prob.status not in ("optimal", "optimal_inaccurate"):
-        print("Not Optimal!")
-        return 1e6
+    # if a.value is None or prob.status not in ("optimal", "optimal_inaccurate"):
+    #     return 1e6, debug_info
 
-    w_hat = W @ a.value
-    # print("Success!")
-    return float(np.sum((w_hat - w_d)**2))
+    # a_val = a.value.copy()
+    a_val = a
+    # w_hat = W @ a.value
+    w_hat = W @ a
+    resid = w_hat - w_d
+    # cost = float(np.sum((w_hat[:2]-w_d[:2])**2)) + 5*(w_hat[2]-w_d[2])**2
+    cost = float(np.sum((w_hat-w_d)**2))
+
+    debug_info['a_value'] = a_val
+    debug_info['w_hat'] = w_hat.copy()
+    debug_info['residual'] = resid
+    debug_info['cost'] = cost
+    slack = (b - (A @ a_val))
+    debug_info['constraint_slack'] = slack.copy()
+
+    return cost, debug_info
 
 class PSOCostWrapper:
     def __init__(self, bx, by, w_d, theta, f_mag, lam, lam_min, lam_max):
@@ -119,11 +141,12 @@ class PSOCostWrapper:
         # swarm: (n_particles, 2) -> costs (n_particles,)
         out = np.empty(swarm.shape[0], dtype=float)
         for i, (s, d) in enumerate(swarm):
-            out[i] = pso_wrench_cost_python(
+            cost, debug = pso_wrench_cost_python(
                 s, d, self.bx, self.by, self.w_d,
                 self.theta, self.f_mag, self.lam,
                 self.lam_min, self.lam_max
             )
+            out[i] = cost
         return out
 
 # ==================== ROS 2 Node ====================
@@ -131,36 +154,38 @@ class PSOCostWrapper:
 class ControlAllocationNode(Node):
     def __init__(self):
         super().__init__("control_allocation_node")
-
-        # -------- Parameters (tweak from CLI) --------
+        #region Parameters
         self.declare_parameter("boundary_topic", "/vision/boundary_points")
         self.declare_parameter("velocity_topic", "/robot/commanded_twist")
         self.declare_parameter("push_points_topic", "/allocation/push_points")
         self.declare_parameter("mu_alpha_topic", "/allocation/mu_alpha")
+        self.declare_parameter("wrench_desired_topic", "/allocation/wrench_desired")
+        self.declare_parameter("object_pose_topic", "/object_poses/wrench")
 
         self.declare_parameter("com_xy", [0.0, 0.0])             # center of mass
-        self.declare_parameter("desired_wrench", [0.0, 1.0, 0.0])
+        self.declare_parameter("desired_wrench", [1.0, 1.0, -0.1])
 
         # Friction / span
-        self.declare_parameter("theta", float(math.atan(0.5)))   # mu = 0.5
+        self.declare_parameter("theta", float(math.atan(0.1)))   # mu = 0.5
         self.declare_parameter("f_mag", 1.0)
-        self.declare_parameter("lambda", 0.5)                    # torque scale in your cost
-        self.declare_parameter("lambda_min", 0.15)
-        self.declare_parameter("lambda_max", 0.50)
+        self.declare_parameter("lambda", 1.0)                    # torque scale in your cost
+        self.declare_parameter("lambda_min", 0.01)
+        self.declare_parameter("lambda_max", 0.10)
 
         # PSO
-        self.declare_parameter("pso_swarm", 50)
-        self.declare_parameter("pso_iters", 50)
-        self.declare_parameter("lb", [0.10, 0.00])               # case1 defaults
-        self.declare_parameter("ub", [0.20, 0.10])
+        self.declare_parameter("pso_swarm", 40)
+        self.declare_parameter("pso_iters", 40)
+        self.declare_parameter("lb", [0.00, 0.00])               # case1 defaults
+        self.declare_parameter("ub", [1.00, 0.20])
 
         # Adaptation
         self.declare_parameter("mu_init", [1.0, 1.0, 1.0])
         self.declare_parameter("eta", 0.05)
         self.declare_parameter("fd_eps", 1e-3)
         self.declare_parameter("update_rate_hz", 10.0)
+        #endregion
 
-        # -------- State --------
+        #region State Initialization
         self.boundary = None     # (N,2)
         self.bx = None
         self.by = None
@@ -175,8 +200,9 @@ class ControlAllocationNode(Node):
         self.mu = np.array(self.get_parameter("mu_init").value, dtype=float)  # R^3
         self.alpha_ub = 1.0
         self.v_meas = np.zeros(3)
+        #endregion
 
-        # -------- IO --------
+        #region ROS2 IO
         self.sub_boundary = self.create_subscription(
             Float32MultiArray,
             self.get_parameter("boundary_topic").value,
@@ -187,6 +213,11 @@ class ControlAllocationNode(Node):
             self.get_parameter("velocity_topic").value,
             self.vel_cb, 10
         )
+        self.sub_obj = self.create_subscription(
+            PoseStamped,
+            self.get_parameter("object_pose_topic").value,
+            self.pose_cb, 10
+        )
         self.pub_push = self.create_publisher(
             Float32MultiArray,
             self.get_parameter("push_points_topic").value, 10
@@ -195,30 +226,43 @@ class ControlAllocationNode(Node):
             Float32MultiArray,
             self.get_parameter("mu_alpha_topic").value, 10
         )
+        self.pub_desired = self.create_publisher(
+            Float32MultiArray,
+            self.get_parameter("wrench_desired_topic").value, 10
+        )
 
         self.timer = self.create_timer(
             1.0 / float(self.get_parameter("update_rate_hz").value),
             self.control_step
         )
+        #endregion
 
         self.get_logger().info("control_allocation_node ready.")
 
     # -------- Callbacks --------
     def boundary_cb(self, msg: Float32MultiArray):
+        # print("Received new boundary!!")
         data = np.array(msg.data, dtype=float)
         if data.size < 6 or data.size % 2 != 0:
             self.get_logger().warn("Boundary malformed; expected [x1,y1,x2,y2,...].")
             return
         pts = data.reshape(-1, 2)
-        self.boundary = pts
-        self.bx, self.by = periodic_interp(pts)
+        pts_adjusted = pts - self.com
+        self.boundary = pts_adjusted
+        self.bx, self.by = periodic_interp(pts_adjusted)
 
     def vel_cb(self, msg: TwistStamped):
         self.v_meas = np.array([msg.twist.linear.x, msg.twist.linear.y, msg.twist.angular.z], dtype=float)
 
+    def pose_cb(self, msg: PoseStamped):
+        self.com = np.array([msg.pose.position.x, msg.pose.position.y], dtype=float)
+
     # -------- Main loop --------
     def control_step(self):
-        print("Starting Control Step")
+        # print("Starting Control Step")
+        msg_w_d = Float32MultiArray()
+        msg_w_d.data = [float(self.w_d[0]),float(self.w_d[1]),float(self.w_d[2])]
+        self.pub_desired.publish(msg_w_d)
         if self.boundary is None:
             return
 
@@ -239,12 +283,23 @@ class ControlAllocationNode(Node):
             bounds=(lb, ub),
         )
         b_cost, (s_opt, d_opt) = optimizer.optimize(cost, iters=int(self.get_parameter("pso_iters").value), verbose=False)
+        # # haha no
+        # s_opt = 0.95
+        # d_opt = 0.02
+        print(f"Best Cost: {b_cost}")
+        print(f"Best S, D: {s_opt}, {d_opt}")
+
+        # Test the best point
+        cost_dbg, dbg = self.debug_solve_at(s_opt, d_opt)
+        print(f"DEBUG STATS FOR SOLUTION:")
+        for dbk, dbv in dbg.items():
+            print(dbk, dbv)
 
         # Compute/contact points
         s1 = float(s_opt)
         s2 = float((s_opt + d_opt) % 1.0)
-        p1 = np.array([float(self.bx(s1)), float(self.by(s1))])
-        p2 = np.array([float(self.bx(s2)), float(self.by(s2))])
+        p1 = np.array([float(self.bx(s1)), float(self.by(s1))]) + self.com
+        p2 = np.array([float(self.bx(s2)), float(self.by(s2))]) + self.com
 
         # Publish push points
         msg_pts = Float32MultiArray()
@@ -282,6 +337,14 @@ class ControlAllocationNode(Node):
         msg_mu = Float32MultiArray()
         msg_mu.data = [float(self.mu[0]), float(self.mu[1]), float(self.mu[2]), float(self.alpha_ub)]
         self.pub_mu.publish(msg_mu)
+
+    def debug_solve_at(self, s, d):
+        cost, dbg = pso_wrench_cost_python(
+            s, d, self.bx, self.by, self.w_d,
+            self.theta, self.f_mag, self.lam,
+            self.lam_min, self.lam_max
+        )
+        return cost, dbg
 
 # ==================== Entrypoint ====================
 

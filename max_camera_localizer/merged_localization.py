@@ -10,7 +10,7 @@ transform_points_world_to_img, transform_point_world_to_cam
 from max_camera_localizer.detection_functions import detect_markers, detect_color_blobs, estimate_pose, \
     identify_objects_from_blobs, attempt_recovery_for_missing_objects
 from max_camera_localizer.object_frame_definitions import define_jenga_contour, hard_define_contour
-from max_camera_localizer.drawing_functions import draw_text, draw_object_lines
+from max_camera_localizer.drawing_functions import draw_text, draw_object_lines, draw_wrench
 import threading
 import rclpy
 import argparse
@@ -84,9 +84,6 @@ def pick_closest_blob(blobs, last_position):
     distances = np.linalg.norm(blobs_np - last_position, axis=1)
     closest_idx = np.argmin(distances)
     return blobs[closest_idx]
-
-def match_points(new_blobs, unconfirmed_blobs, confirmed_blobs):
-    pass
 
 def main():
     args = parse_args()
@@ -281,8 +278,8 @@ def main():
                     
                     bridge_node.publish_recommended_contacts(recommended)
                 elif args.recommend_push == "pso" and len(push_point_xyxy) == 4:
-                    pp_world_xyz = [[push_point_xyxy[0], push_point_xyxy[1], 0.0],
-                                    [push_point_xyxy[2], push_point_xyxy[3], 0.0]]
+                    pp_world_xyz = [[push_point_xyxy[0], push_point_xyxy[1], 0.01],
+                                    [push_point_xyxy[2], push_point_xyxy[3], 0.01]]
                     recommended = []
                     for pp_xyz in pp_world_xyz:
                         pp_img = transform_points_world_to_img([pp_xyz], cam_pos, cam_quat, CAMERA_MATRIX)
@@ -296,16 +293,19 @@ def main():
                         recommended.append([pp_xyz, np.array([0.0, 0.0, 1.0])])
                     bridge_node.publish_recommended_contacts(recommended)
 
+                    # Draw desired wrench
+                    frame = draw_wrench(frame, cam_quat, bridge_node.w_d)
+
 
 
                 # Draw target contour
-                target_contour = hard_define_contour(TARGET_POSES[name][0], TARGET_POSES[name][1], name)
-                contour_xyz = target_contour["xyz"]
-                contour_img = transform_points_world_to_img(contour_xyz, cam_pos, cam_quat, CAMERA_MATRIX)
-                contour_img = np.array(contour_img)
-                contour_img.reshape((-1, 1, 2))
-                contour_img = contour_img[::20]
-                cv2.polylines(frame,[contour_img],False,color)
+                # target_contour = hard_define_contour(TARGET_POSES[name][0], TARGET_POSES[name][1], name)
+                # contour_xyz = target_contour["xyz"]
+                # contour_img = transform_points_world_to_img(contour_xyz, cam_pos, cam_quat, CAMERA_MATRIX)
+                # contour_img = np.array(contour_img)
+                # contour_img.reshape((-1, 1, 2))
+                # contour_img = contour_img[::20]
+                # cv2.polylines(frame,[contour_img],False,color)
 
         detected_objects = identified_objects.copy()
         bridge_node.publish_camera_pose(cam_pos, cam_quat)

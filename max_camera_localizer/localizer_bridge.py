@@ -30,6 +30,9 @@ class LocalizerBridge(Node):
         self.allocation_contacts_sub = self.create_subscription(
             Float32MultiArray, "/allocation/push_points", self.push_point_callback, 10)
         self.allocation_pushers_xyxy = []
+        self.allocation_desired = self.create_subscription(
+            Float32MultiArray, "/allocation/wrench_desired", self.wrench_desired_callback, 10)
+        self.w_d = None
 
 
         # --- Publishers ---
@@ -50,9 +53,11 @@ class LocalizerBridge(Node):
                                      msg.pose.orientation.z, msg.pose.orientation.w])
 
     def push_point_callback(self, msg: Float32MultiArray):
-        print(f"Got Push points {msg.data}")
         self.allocation_pushers_xyxy = msg.data
 
+    def wrench_desired_callback(self, msg: Float32MultiArray):
+        self.w_d = msg.data
+        
     def get_ee_pose(self):
         return self.ee_position, self.ee_quat
 
