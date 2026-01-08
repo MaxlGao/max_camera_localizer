@@ -10,7 +10,7 @@ transform_points_world_to_img, transform_point_world_to_cam
 from max_camera_localizer.detection_functions import detect_markers, detect_color_blobs, estimate_pose, \
     identify_objects_from_blobs, attempt_recovery_for_missing_objects
 from max_camera_localizer.object_frame_definitions import define_jenga_contour, hard_define_contour
-from max_camera_localizer.drawing_functions import draw_text, draw_object_lines, draw_wrench
+from max_camera_localizer.drawing_functions import draw_text, draw_object_lines, draw_wrench, draw_twist
 import threading
 import rclpy
 import argparse
@@ -92,7 +92,7 @@ def main():
     kalman_filters = {}
     marker_stabilities = {}
     last_seen_frames = {}
-    frame_idx = 0
+    bridge_node.frame_idx = 0
 
     if args.camera_id is not None:
         cam_id = args.camera_id
@@ -129,18 +129,21 @@ def main():
         if not ret:
             break
 
-        frame_idx += 1
+        bridge_node.frame_idx += 1
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        #region Object Detection
 
         identified_jenga = []
         ee_pos, ee_quat = bridge_node.get_ee_pose()
         cam_pos, cam_quat = bridge_node.get_camera_pose()
-        push_point_xyxy = bridge_node.allocation_pushers_xyxy
+        push_point_xyxy = bridge_node.allocation_pushers_xyxy # Might be outdated?
+        gripper_twist_body = bridge_node.v_g_body
 
         # Aruco Section
         corners, ids = detect_markers(frame, gray, ARUCO_DICTS, parameters)
         estimate_pose(frame, corners, ids, CAMERA_MATRIX, DIST_COEFFS, MARKER_SIZE,
-                    kalman_filters, marker_stabilities, last_seen_frames, frame_idx, cam_pos, cam_quat, talk)
+                    kalman_filters, marker_stabilities, last_seen_frames, bridge_node.frame_idx, cam_pos, cam_quat, talk)
 
         # After estimating pose, collect marker world positions
         for marker_id in kalman_filters:
@@ -212,7 +215,7 @@ def main():
                         obj_index, local_contour_index = all_meta[contour_idx]
                         nearest_pushers.append({
                             'pusher_name': color,
-                            'frame_number': frame_idx,
+                            'frame_number': bridge_node.frame_idx,
                             'color': col,
                             'pusher_location': pusher_pos,
                             'nearest_point': nearest_point,
@@ -277,9 +280,39 @@ def main():
                         recommended.append(recommended[0])
                     
                     bridge_node.publish_recommended_contacts(recommended)
+
+                    # Draw target contour
+                    target_contour = hard_define_contour(TARGET_POSES[name][0], TARGET_POSES[name][1], name)
+                    contour_xyz = target_contour["xyz"]
+                    contour_img = transform_points_world_to_img(contour_xyz, cam_pos, cam_quat, CAMERA_MATRIX)
+                    contour_img = np.array(contour_img)
+                    contour_img.reshape((-1, 1, 2))
+                    contour_img = contour_img[::20]
+                    cv2.polylines(frame,[contour_img],False,color)
+
                 elif args.recommend_push == "pso" and len(push_point_xyxy) == 4:
-                    pp_world_xyz = [[push_point_xyxy[0], push_point_xyxy[1], 0.01],
-                                    [push_point_xyxy[2], push_point_xyxy[3], 0.01]]
+                    pp_body_xy = np.array([[push_point_xyxy[0], push_point_xyxy[1]],
+                                           [push_point_xyxy[2], push_point_xyxy[3]]])
+                    # I'm ASSUMING the object in question is the one processed by PSO...
+                    # Transform to world frame...
+                    def rot2(a):
+                        c, s = np.cos(a), np.sin(a)
+                        return np.array([[c, -s], [s, c]])
+                    pos = obj["position"]
+                    quat = obj["quaternion"]
+                    euler = R.from_quat(quat).as_euler('xyz', degrees=False)
+                    com = np.array([pos[0], pos[1]])
+                    ori = euler[2]
+                    pp_world_xy = (rot2(ori) @ pp_body_xy.T).T + com
+                    pp_world_xyxy = pp_world_xy.ravel().tolist()
+                    pp_world_xyz = [[pp_world_xyxy[0], pp_world_xyxy[1], 0.01],
+                                    [pp_world_xyxy[2], pp_world_xyxy[3], 0.01]]
+                    
+                    # Do transform the body twist as well
+                    gripper_twist_body_lin = np.array(gripper_twist_body[0:2])
+                    gripper_twist_body_rotated = (rot2(ori) @ gripper_twist_body_lin).tolist()
+                    gripper_twist_world = [gripper_twist_body_rotated[0], gripper_twist_body_rotated[1], gripper_twist_body[2]]
+
                     recommended = []
                     for pp_xyz in pp_world_xyz:
                         pp_img = transform_points_world_to_img([pp_xyz], cam_pos, cam_quat, CAMERA_MATRIX)
@@ -290,22 +323,17 @@ def main():
                         cv2.putText(frame, label, (pp_img[0][0] - 20, pp_img[0][1] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
                         cv2.circle(frame, pp_img[0], 5, color)
-                        recommended.append([pp_xyz, np.array([0.0, 0.0, 1.0])])
-                    bridge_node.publish_recommended_contacts(recommended)
+                        recommended.append([pp_xyz, np.array([0.0, 0.0, 1.0])]) # norms are pos z
+                    # reck = [ppxyz for [ppxyz, _] in recommended]
+                    # print(f"{reck}")
+                    bridge_node.publish_recommended_contacts(recommended) # In world frame!!
+                    bridge_node.publish_recommended_twist(gripper_twist_world)
 
-                    # Draw desired wrench
-                    frame = draw_wrench(frame, cam_quat, bridge_node.w_d)
-
-
-
-                # Draw target contour
-                # target_contour = hard_define_contour(TARGET_POSES[name][0], TARGET_POSES[name][1], name)
-                # contour_xyz = target_contour["xyz"]
-                # contour_img = transform_points_world_to_img(contour_xyz, cam_pos, cam_quat, CAMERA_MATRIX)
-                # contour_img = np.array(contour_img)
-                # contour_img.reshape((-1, 1, 2))
-                # contour_img = contour_img[::20]
-                # cv2.polylines(frame,[contour_img],False,color)
+                    # Draw desired wrench and twist
+                    if bridge_node.w_d:
+                        cv2.rectangle(frame, (960, 0), [frame.shape[1], 320], (100,100,100), -1)
+                        frame = draw_wrench(frame, cam_quat, bridge_node.w_d)
+                        frame = draw_twist(frame, cam_quat, gripper_twist_world)
 
         detected_objects = identified_objects.copy()
         bridge_node.publish_camera_pose(cam_pos, cam_quat)
@@ -314,9 +342,11 @@ def main():
         all_objects = identified_objects+identified_jenga
         if all_objects:
             selected_object = all_objects[0]
-            bridge_node.publish_contour(selected_object['contour']['xyz'])
-        draw_text(frame, cam_pos, cam_quat, identified_objects+identified_jenga, frame_idx, ee_pos, ee_quat)
+            bridge_node.publish_contour(selected_object['contour']['xyz'], selected_object)
+        draw_text(frame, cam_pos, cam_quat, identified_objects+identified_jenga, bridge_node.frame_idx, ee_pos, ee_quat)
         draw_object_lines(frame, CAMERA_MATRIX, cam_pos, cam_quat, identified_objects+identified_jenga, nearest_pushers)
+
+        #endregion
 
         cv2.imshow("Merged Detection", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):

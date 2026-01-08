@@ -2,6 +2,12 @@ from scipy.spatial.transform import Rotation as R
 import numpy as np
 from max_camera_localizer.process_stl import CONTOUR_ALLEN_KEY, CONTOUR_WRENCH, CONTOUR_JENGA
 
+# Contours are:
+    # 'xyz': np.array of shape (N, 3), rows in mm
+    # 'normals': np.array of shape (N, 3), unit vector
+    # 'kappa': np.array of shape (N, ), curvature in 1/m
+    # 'length': float, total length of contour in mm
+
 def define_body_frame_allen_key(p1, p2, p3, width=0.005):
     "Returns Origin, Quat, {Contact Points}"
     "Contact points as (idx, pos, normvec)"

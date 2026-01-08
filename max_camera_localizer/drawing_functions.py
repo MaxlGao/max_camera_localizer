@@ -137,7 +137,7 @@ def draw_object_lines(frame, camera_matrix, cam_pos, cam_quat, identified_object
 
     return frame
 
-def draw_wrench(frame, cam_quat, wrench, scale=40, position=(0.85, 0.15)):
+def draw_wrench(frame, cam_quat, wrench, scale=40, position=(0.85, 0.12)):
     """
     Draw a 2D representation of a wrench (force + torque) in the top-right corner of the image.
 
@@ -179,8 +179,9 @@ def draw_wrench(frame, cam_quat, wrench, scale=40, position=(0.85, 0.15)):
         y_vec_2d /= np.linalg.norm(y_vec_2d)
 
     # Compute arrow endpoints
-    arrow_len_x = int(scale * fx)
-    arrow_len_y = int(scale * fy)
+    f_high = max(1e-6, max(abs(fx), abs(fy)))
+    arrow_len_x = int(scale * fx / f_high)
+    arrow_len_y = int(scale * fy / f_high)
 
     end_fx = (int(cx + arrow_len_x * x_vec_2d[0]), int(cy + arrow_len_x * x_vec_2d[1]))
     end_fy = (int(cx + arrow_len_y * y_vec_2d[0]), int(cy + arrow_len_y * y_vec_2d[1]))
@@ -189,6 +190,7 @@ def draw_wrench(frame, cam_quat, wrench, scale=40, position=(0.85, 0.15)):
     color_fx = (0, 0, 255)   # Red
     color_fy = (0, 255, 0)   # Green
     color_tz = (255, 0, 0)   # Blue
+
 
     # Draw arrows
     cv2.arrowedLine(frame, (cx, cy), end_fx, color_fx, 2, tipLength=0.3)
@@ -213,7 +215,81 @@ def draw_wrench(frame, cam_quat, wrench, scale=40, position=(0.85, 0.15)):
     cv2.putText(frame, f"Tz={tz:.2f}", (cx + 50, cy + 40), font, 0.6, color_tz, 2)
 
     # Title box
-    cv2.rectangle(frame, (cx - 60, cy - 60), (cx + 150, cy + 60), (50, 50, 50), 2)
+    cv2.rectangle(frame, (cx - 60, cy - 60), (cx + 150, cy + 60), (200, 200, 200), 2)
     cv2.putText(frame, "Desired Wrench", (cx - 50, cy - 65), font, 0.6, (200, 200, 200), 2)
+
+    return frame
+
+def draw_twist(frame, cam_quat, twist, scale=40, position=(0.85, 0.32)):
+    """
+    Draw a 2D representation of a twist (linear, angular velocity) in the top-right corner of the image.
+
+    Args:
+        frame: OpenCV image.
+        wrench: array 'vx', 'vy', 'omegaz'  (linear x, linear y, angular z)
+        scale: scaling factor for arrow length visualization.
+        position: normalized position (x_frac, y_frac) for wrench origin (in image coords).
+    """
+    h, w = frame.shape[:2]
+    cx = int(w * position[0]) - 50
+    cy = int(h * position[1])
+
+    vx = twist[0] * 1000
+    vy = twist[1] * 1000
+    lin_dir_world = np.array([vx, vy, 0])
+    
+    vmag = (vx**2 + vy**2)**0.5
+    wz = twist[2] * 180 / np.pi
+    # === Transform base-frame directions into camera frame ===
+    # Define unit vectors in base frame
+    if vmag > 1e-6:
+        lin_dir_world /= vmag
+
+    # Rotation: world -> camera
+    R_cam = R.from_quat(cam_quat)
+    R_world_to_cam = R_cam.inv()
+
+    # Transform into camera coordinates
+    lin_cam = R_world_to_cam.apply(lin_dir_world)
+
+    # Project into image plane: we take x,y components of the camera axes
+    lin_vec_2d = lin_cam[:2]
+
+    # Normalize for consistent display
+    if np.linalg.norm(lin_vec_2d) > 1e-6:
+        lin_vec_2d /= np.linalg.norm(lin_vec_2d)
+
+    # Compute arrow endpoints
+    end_lin = (int(cx + scale * lin_vec_2d[0]), int(cy + scale * lin_vec_2d[1]))
+
+    # === Draw visualization ===
+    color_lin = (255, 255, 255)
+    color_rot = (255, 255, 255)
+
+
+    # Draw arrows
+    cv2.arrowedLine(frame, (cx, cy), end_lin, color_lin, 2, tipLength=0.3)
+
+    # Draw torque (wz) as a curved arrow (screen-space, not orientation-dependent)
+    radius = 20
+    start_angle = 0
+    end_angle = int(-np.sign(wz) * 270)
+    cv2.ellipse(frame, (cx, cy), (radius, radius), 0, start_angle, end_angle, color_rot, 2)
+    if wz != 0:
+        angle_rad = np.deg2rad(end_angle)
+        end_x = int(cx + radius * np.cos(angle_rad))
+        end_y = int(cy + radius * np.sin(angle_rad))
+        cv2.arrowedLine(frame, (end_x, end_y), (end_x + scale//4, end_y), color_rot, 2, tipLength=1.0)
+
+
+    # Labels
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(frame, f"vx={vx:5.2f}", (cx + 50, cy - 40), font, 0.6, color_lin, 2)
+    cv2.putText(frame, f"vy={vy:5.2f}", (cx + 50, cy     ), font, 0.6, color_lin, 2)
+    cv2.putText(frame, f"wz={wz:5.2f}", (cx + 50, cy + 40), font, 0.6, color_rot, 2)
+
+    # Title box
+    cv2.rectangle(frame, (cx - 60, cy - 60), (cx + 150, cy + 60), (200, 200, 200), 2)
+    cv2.putText(frame, "Gripper Twist (mm, deg)/s", (cx - 50, cy - 65), font, 0.6, (200, 200, 200), 2)
 
     return frame

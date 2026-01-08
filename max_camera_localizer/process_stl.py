@@ -209,7 +209,7 @@ def compute_normals(tck, u_eval, polygon_for_orientation_check=None):
 
     return normals
 
-def get_curve(mesh, ax_geom=None, ax_curv=None):
+def get_curve(mesh, ax_geom=None, ax_curv=None, reverse=False):
     path, to3D, height = get_path(mesh)
     all_loops = group_segments_into_loops(path)
     polylines = [segments_to_polyline(loop) for loop in all_loops if len(loop) > 2]
@@ -229,6 +229,8 @@ def get_curve(mesh, ax_geom=None, ax_curv=None):
 
     # Resample and fit
     resampled = resample_polyline_equally(polylines[outermost_loop], n_points=1000)
+    if reverse:
+        resampled = resampled[::-1]
 
     # Fit spline
     tck = fit_spline_arclength_weighted(resampled, s=50.0, per=1)
@@ -284,6 +286,12 @@ def get_curve(mesh, ax_geom=None, ax_curv=None):
     
     return x_smooth, y_smooth, kappa, height, total_length, normals
 
+# Contours are:
+    # 'xyz': np.array of shape (N, 3), rows in mm
+    # 'normals': np.array of shape (N, 3), unit vector
+    # 'kappa': np.array of shape (N, ), curvature in 1/m
+    # 'length': float, total length of contour in mm
+
 x_key, y_key, k_key, z_key, l_key, n_key = get_curve(mesh_key)
 CONTOUR_ALLEN_KEY = {
     'xyz': np.column_stack((x_key, y_key, [z_key]*len(x_key))),
@@ -300,7 +308,7 @@ CONTOUR_WRENCH = {
     'length': l_wrench
 }
 
-x_jenga, y_jenga, k_jenga, z_jenga, l_jenga, n_jenga = get_curve(mesh_jenga)
+x_jenga, y_jenga, k_jenga, z_jenga, l_jenga, n_jenga = get_curve(mesh_jenga, reverse=True)
 CONTOUR_JENGA = {
     'xyz': np.column_stack((x_jenga, y_jenga, [z_jenga]*len(x_jenga))),
     'normals': np.column_stack((n_jenga, np.zeros(len(n_jenga)))),
@@ -310,7 +318,7 @@ CONTOUR_JENGA = {
 
 def export_contour_wrench_to_csv(contour_wrench, filename):
     xyz = contour_wrench['xyz']       # shape: (N, 3)
-    normals = contour_wrench['normals']  # shape: (N, 2)
+    normals = contour_wrench['normals']  # shape: (N, 3)
     kappa = contour_wrench['kappa']   # shape: (N,)
 
     # Check that all arrays have the same length
@@ -332,7 +340,7 @@ if __name__ == "__main__":
     fig, axs = plt.subplots(3, 2, figsize=(12, 8))
     get_curve(mesh_key, axs[0, 1], axs[0, 0])
     get_curve(mesh_wrench, axs[1, 1], axs[1, 0])
-    get_curve(mesh_jenga, axs[2, 1], axs[2, 0])
+    get_curve(mesh_jenga, axs[2, 1], axs[2, 0], reverse=True)
 
     plt.tight_layout()
     plt.show()
