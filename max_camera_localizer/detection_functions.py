@@ -8,16 +8,21 @@ from max_camera_localizer.kalman_functions import QuaternionKalman
 from max_camera_localizer.geometric_functions import transform_points_world_to_img, slerp_quat, quat_to_rvec, complete_triangle, pick_best_candidate
 from max_camera_localizer.object_frame_definitions import define_body_frame_allen_key, define_body_frame_wrench
 
-def detect_markers(frame, gray, aruco_dicts, parameters):
+def detect_markers(frame, gray, aruco_dicts, parameters, max_id=6, min_id=6):
+    # currently only looking for 6
     all_corners, all_ids = [], []
     for dict_id in aruco_dicts.values():
         aruco_dict = aruco.getPredefinedDictionary(dict_id)
         detector = aruco.ArucoDetector(aruco_dict, parameters)
         corners, ids, _ = detector.detectMarkers(gray)
-        if ids is not None:
-            all_corners.extend(corners)
-            all_ids.extend(ids.flatten())
-            # aruco.drawDetectedMarkers(frame, corners, ids)
+
+        if ids is None:
+            continue
+        ids = ids.flatten()
+        mask = (ids <= max_id) & (ids >= min_id)
+        all_corners.extend([c for c, m in zip(corners, mask) if m])
+        all_ids.extend(ids[mask])
+    # aruco.drawDetectedMarkers(frame, corners, ids) # optional
     return all_corners, all_ids
 
 def detect_color_blobs(frame, color_range, color, camera_matrix, cam_pos, cam_quat, height=0.01, min_area=120, merge_threshold=0.02):
@@ -79,10 +84,11 @@ def detect_color_blobs(frame, color_range, color, camera_matrix, cam_pos, cam_qu
     return merged_world_points, image_points
 
 def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
-                  kalman_filters, marker_stabilities, last_seen_frames, current_frame, cam_pos, cam_quat, talk=True):
+                  kalman_filters, marker_stabilities, last_seen_frames, current_frame, cam_pos, cam_quat, talk=True, camera_fps=15.0):
     max_movement = 0.05  # meters
     hold_required = 5    # frames it must persist
     half_size = marker_size / 2
+    dt = 1.0 / camera_fps  # Convert FPS to seconds per frame
 
     if corners and ids:
         for corner, marker_id in zip(corners, ids):
@@ -90,7 +96,7 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
 
             # Initialize tracking state if this is a new marker
             if marker_id not in kalman_filters:
-                kalman_filters[marker_id] = QuaternionKalman()
+                kalman_filters[marker_id] = QuaternionKalman(dt=dt)
                 marker_stabilities[marker_id] = {
                     "last_tvec": None,
                     "last_frame": -1,
@@ -110,7 +116,51 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                 [-half_size, -half_size, 0]
             ], dtype=np.float32)
 
-            success, rvec, tvec = cv2.solvePnP(object_points, image_points, camera_matrix, dist_coeffs)
+            success = False
+            rvec = None
+            tvec = None
+            generic_result = cv2.solvePnPGeneric(
+                object_points,
+                image_points,
+                camera_matrix,
+                dist_coeffs,
+                flags=cv2.SOLVEPNP_IPPE_SQUARE,
+            )
+            if generic_result[0]:
+                rvecs = generic_result[1]
+                tvecs = generic_result[2]
+                reprojection_errors = generic_result[3] if len(generic_result) > 3 else [0.0] * len(rvecs)
+
+                def pose_score(candidate_rvec, candidate_tvec, reprojection_error):
+                    candidate_rvec = np.asarray(candidate_rvec).reshape(3)
+                    candidate_tvec = np.asarray(candidate_tvec).reshape(3)
+                    reprojection_error = float(np.asarray(reprojection_error).reshape(-1)[0])
+                    tilt_penalty = candidate_rvec[0] ** 2 + candidate_rvec[1] ** 2
+                    depth_penalty = candidate_tvec[2] ** 2
+                    return reprojection_error + 5.0 * tilt_penalty + 5.0 * depth_penalty
+
+                best_idx = min(
+                    range(len(rvecs)),
+                    key=lambda idx: pose_score(rvecs[idx], tvecs[idx], reprojection_errors[idx]),
+                )
+                rvec = rvecs[best_idx]
+                tvec = tvecs[best_idx]
+                success = True
+            else:
+                guess_rvec = np.zeros((3, 1), dtype=np.float32)
+                guess_tvec = np.array([[0.0], [0.0], [marker_size]], dtype=np.float32)
+                if stability["last_tvec"] is not None:
+                    guess_tvec[:, 0] = stability["last_tvec"]
+                success, rvec, tvec = cv2.solvePnP(
+                    object_points,
+                    image_points,
+                    camera_matrix,
+                    dist_coeffs,
+                    rvec=guess_rvec,
+                    tvec=guess_tvec,
+                    useExtrinsicGuess=True,
+                    flags=cv2.SOLVEPNP_ITERATIVE,
+                )
             if success:
                 tvec_flat = tvec.flatten()
                 distance = np.linalg.norm(tvec_flat - stability["last_tvec"]) if stability["last_tvec"] is not None else 0
@@ -130,7 +180,7 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                     measured_quat = rvec_to_quat(rvec)
                     pred_tvec, pred_rvec = kalman.predict()
                     pred_quat = rvec_to_quat(pred_rvec)
-                    blend_factor = 0.99
+                    blend_factor = 0.995 # Adjust as needed (0 = trust measurement, 1 = trust prediction)
                     blended_quat = slerp_quat(pred_quat, measured_quat, blend=blend_factor)
                     blended_rvec = quat_to_rvec(blended_quat)
                     blended_tvec = blend_factor * tvec_flat + (1 - blend_factor) * pred_tvec

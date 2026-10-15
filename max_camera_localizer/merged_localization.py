@@ -71,8 +71,8 @@ def parse_args():
                         help="Prevents console prints. Otherwise, prints object positions in both camera frame and base frame.")
     parser.add_argument("--no-pushers", action='store_true',
                         help="Stops detecting yellow and green pushers")
-    parser.add_argument("--recommend-push", type=str, default="none",
-                        help="none = Don't recommend; lfd = Learning from Demonstration, pso = allocation-based")
+    parser.add_argument("--recommend-push", type=str, default="pso",
+                        help="none = Don't recommend; lfd = Learning from Demonstration, pso (default) = allocation-based")
     return parser.parse_args()
 
 def pick_closest_blob(blobs, last_position):
@@ -113,6 +113,18 @@ def main():
         return
 
     parameters = aruco.DetectorParameters()
+    # Relax detection thresholds so we keep more marginal markers under blur,
+    # scale changes, and uneven lighting.
+    parameters.adaptiveThreshWinSizeMax = 53
+    parameters.adaptiveThreshWinSizeStep = 4
+    parameters.minMarkerPerimeterRate = 0.015
+    parameters.maxMarkerPerimeterRate = 6.0
+    parameters.polygonalApproxAccuracyRate = 0.05
+    parameters.minCornerDistanceRate = 0.02
+    parameters.minDistanceToBorder = 1
+    parameters.errorCorrectionRate = 0.75
+    parameters.detectInvertedMarker = True
+    parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, c_width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, c_height)
     cap.set(cv2.CAP_PROP_AUTO_WB, 0)
@@ -123,13 +135,16 @@ def main():
 
     detected_objects = []
     last_pushers = {"green": None, "yellow": None}
-    unconfirmed_blobs = {"green": None, "yellow": None}
+    # unconfirmed_blobs = {"green": None, "yellow": None}
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
         bridge_node.frame_idx += 1
+        now = bridge_node.get_clock().now().to_msg()
+        now_sec = now.sec + now.nanosec * 1e-9
+        bridge_node.clock = now_sec - bridge_node.start_time
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         #region Object Detection
@@ -142,8 +157,11 @@ def main():
 
         # Aruco Section
         corners, ids = detect_markers(frame, gray, ARUCO_DICTS, parameters)
+        camera_fps = cap.get(cv2.CAP_PROP_FPS)
+        if camera_fps <= 0:  # Fallback if FPS query fails
+            camera_fps = 15.0
         estimate_pose(frame, corners, ids, CAMERA_MATRIX, DIST_COEFFS, MARKER_SIZE,
-                    kalman_filters, marker_stabilities, last_seen_frames, bridge_node.frame_idx, cam_pos, cam_quat, talk)
+                    kalman_filters, marker_stabilities, last_seen_frames, bridge_node.frame_idx, cam_pos, cam_quat, talk, camera_fps=camera_fps)
 
         # After estimating pose, collect marker world positions
         for marker_id in kalman_filters:
@@ -246,9 +264,9 @@ def main():
         color = (255, 255, 0)
         for obj in identified_objects+identified_jenga:
             name = obj["name"]
-            if "jenga" in name:
-                name = "jenga"
-            if name in ["allen_key", "wrench", "jenga"]:
+            # if "jenga" in name:
+            #     name = "jenga" # generalize jenga (disabled right now)
+            if name in ["allen_key", "wrench", "jenga_6"]:
                 # Bonus: For the ML test run, predict where the pushers should go
                 if args.recommend_push == "lfd":
                     posex = obj["position"][0]
@@ -298,29 +316,47 @@ def main():
                     def rot2(a):
                         c, s = np.cos(a), np.sin(a)
                         return np.array([[c, -s], [s, c]])
-                    pos = obj["position"]
-                    quat = obj["quaternion"]
-                    euler = R.from_quat(quat).as_euler('xyz', degrees=False)
-                    com = np.array([pos[0], pos[1]])
-                    ori = euler[2]
-                    pp_world_xy = (rot2(ori) @ pp_body_xy.T).T + com
+                    
+                    body_name = obj["name"]
+                    body_pos = obj["position"]
+                    body_quat = obj["quaternion"]
+                    body_euler = R.from_quat(body_quat).as_euler('xyz', degrees=False)
+                    com = np.array([body_pos[0], body_pos[1]])
+                    body_theta = body_euler[2]
+                    pp_world_xy = (rot2(body_theta) @ pp_body_xy.T).T + com
                     pp_world_xyxy = pp_world_xy.ravel().tolist()
                     pp_world_xyz = [[pp_world_xyxy[0], pp_world_xyxy[1], 0.01],
                                     [pp_world_xyxy[2], pp_world_xyxy[3], 0.01]]
                     
                     # Do transform the body twist as well
                     gripper_twist_body_lin = np.array(gripper_twist_body[0:2])
-                    gripper_twist_body_rotated = (rot2(ori) @ gripper_twist_body_lin).tolist()
+                    gripper_twist_body_rotated = (rot2(body_theta) @ gripper_twist_body_lin).tolist()
                     gripper_twist_world = [gripper_twist_body_rotated[0], gripper_twist_body_rotated[1], gripper_twist_body[2]]
+                    body_twist_body = bridge_node.v_b_body[body_name]
+                    body_twist_world = bridge_node.v_b_world[body_name]
+
+                    # First Draw desired wrench and twist
+                    if bridge_node.w_d_body:
+                        cv2.rectangle(frame, (960, 0), [frame.shape[1], 600], (100,100,100), -1)
+                        frame_h, frame_w = frame.shape[:2]
+                        cx = int(frame_w * 0.85) - 50
+                        cy = int(frame_h * 0.04)
+                        cv2.putText(frame, "Body Frame Telemetry", (cx - 50, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
+                        w_d_world = (rot2(body_theta) @ bridge_node.w_d_body[:2]).tolist()
+                        w_d_world.append(bridge_node.w_d_body[2])
+                        frame = draw_wrench(frame, cam_quat, w_d_world, bridge_node.w_d_body, body_theta)
+                        frame = draw_twist(frame, cam_quat, gripper_twist_world, gripper_twist_body)
+                        # Draw estimated twist
+                        frame = draw_twist(frame, cam_quat, body_twist_world, body_twist_body, position=(0.85, 0.56), label="Body Twist (mm, deg)/s")
 
                     recommended = []
                     for pp_xyz in pp_world_xyz:
                         pp_img = transform_points_world_to_img([pp_xyz], cam_pos, cam_quat, CAMERA_MATRIX)
                         label = f"pusher recommended @ ({1000*pp_xyz[0]:.0f}, {1000*pp_xyz[1]:.0f})"
                         (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-                        cv2.rectangle(frame, (pp_img[0][0] - 20,     pp_img[0][1] - h - 20 - 5), 
-                                             (pp_img[0][0] + w - 20, pp_img[0][1] - 20 + 5), (0, 0, 0), -1)
-                        cv2.putText(frame, label, (pp_img[0][0] - 20, pp_img[0][1] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        cv2.rectangle(frame,      (pp_img[0][0] - 20,     pp_img[0][1] - h - 25), 
+                                                  (pp_img[0][0] + w - 20, pp_img[0][1] - 15), (0, 0, 0), -1)
+                        cv2.putText(frame, label, (pp_img[0][0] - 20,     pp_img[0][1] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
                         cv2.circle(frame, pp_img[0], 5, color)
                         recommended.append([pp_xyz, np.array([0.0, 0.0, 1.0])]) # norms are pos z
@@ -329,22 +365,29 @@ def main():
                     bridge_node.publish_recommended_contacts(recommended) # In world frame!!
                     bridge_node.publish_recommended_twist(gripper_twist_world)
 
-                    # Draw desired wrench and twist
-                    if bridge_node.w_d:
-                        cv2.rectangle(frame, (960, 0), [frame.shape[1], 320], (100,100,100), -1)
-                        frame = draw_wrench(frame, cam_quat, bridge_node.w_d)
-                        frame = draw_twist(frame, cam_quat, gripper_twist_world)
-
         detected_objects = identified_objects.copy()
         bridge_node.publish_camera_pose(cam_pos, cam_quat)
         bridge_node.publish_object_poses(identified_objects+identified_jenga)
         bridge_node.publish_contacts(nearest_pushers)
         all_objects = identified_objects+identified_jenga
         if all_objects:
-            selected_object = all_objects[0]
-            bridge_node.publish_contour(selected_object['contour']['xyz'], selected_object)
-        draw_text(frame, cam_pos, cam_quat, identified_objects+identified_jenga, bridge_node.frame_idx, ee_pos, ee_quat)
+            selected_object = all_objects[0] # Critically, only one object is published
+            bridge_node.publish_contour(selected_object['name']) # only name info is needed; contour is in body frame
+        draw_text(frame, cam_pos, cam_quat, identified_objects+identified_jenga, bridge_node.frame_idx, bridge_node.clock, ee_pos, ee_quat)
         draw_object_lines(frame, CAMERA_MATRIX, cam_pos, cam_quat, identified_objects+identified_jenga, nearest_pushers)
+
+        # Draw gripper tip estimates (from gripper_utils via /gripper/tip_points)
+        if getattr(bridge_node, "gripper_tip_points", None):
+            tip_points = bridge_node.gripper_tip_points
+            tip_img_pts = transform_points_world_to_img(tip_points, cam_pos, cam_quat, CAMERA_MATRIX)
+            name_list = ["L Tip", "R Tip", "L Mid", "R Mid"] # Assuming 4 points in order
+            for i, pt in enumerate(tip_img_pts):
+                cv2.circle(frame, pt, 6, (255, 0, 255), -1)
+                cv2.putText(frame, f"{name_list[i]}", (pt[0] + 5, pt[1] - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+            if len(tip_img_pts) >= 2:
+                cv2.line(frame, tuple(tip_img_pts[0]), tuple(tip_img_pts[1]), (255, 0, 255), 2)
+
+        bridge_node.publish_frame()
 
         #endregion
 

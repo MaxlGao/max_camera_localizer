@@ -18,12 +18,14 @@ mesh_key = trimesh.load_mesh(stl_path_key)
 origin_key = np.array([28.33, 0, 37]) # STL file doesn't preserve origin... probably should refactor other origin-setting.
 mesh_key.apply_translation(-origin_key)
 mesh_key.apply_transform(trirotmat(90, [1,0,0], [0,0,0]))
+mesh_key.apply_translation(np.array([-50.0, -10.0, 0])) # adjust origin again
+
 
 mesh_wrench = trimesh.load_mesh(stl_path_wrench)
 origin_wrench = np.array([49, 0, 26])
 mesh_wrench.apply_translation(-origin_wrench)
 mesh_wrench.apply_transform(trirotmat(90, [1,0,0], [0,0,0]))
-mesh_wrench.apply_transform(trirotmat(-90, [0,0,-1], [0,0,0])) # Rotate to match origin definition in object_frame_definitions. Much ad hoc.
+mesh_wrench.apply_transform(trirotmat(-90, [0,0,-1], [0,0,0])) # Rotate to match origin definition in object_frame_definitions. Very ad hoc.
 
 # No STL needed for the jenga block
 mesh_jenga = trimesh.creation.box(extents=[72, 24, 14])
@@ -99,20 +101,20 @@ def segments_to_polyline(loop_segments):
     return np.array(polyline)
 
 def resample_polyline_equally(polyline, n_points=200):
-    # Step 1: Compute arc lengths
+    # arc lengths
     diffs = np.diff(polyline, axis=0)
     seg_lengths = np.linalg.norm(diffs, axis=1)
     cumulative = np.insert(np.cumsum(seg_lengths), 0, 0)
 
-    # Step 2: Interpolation functions
+    # Interpolation
     fx = interp1d(cumulative, polyline[:, 0])
     fy = interp1d(cumulative, polyline[:, 1])
 
-    # Step 3: Evenly spaced distances
+    # Evenly spaced distances
     total_length = cumulative[-1]
     new_lengths = np.linspace(0, total_length, n_points)
 
-    # Step 4: Sample new points
+    # Sample new points
     x_new = fx(new_lengths)
     y_new = fy(new_lengths)
     return np.stack((x_new, y_new), axis=1)
@@ -238,6 +240,7 @@ def get_curve(mesh, ax_geom=None, ax_curv=None, reverse=False):
     x_smooth, y_smooth = resampled_spline[:, 0], resampled_spline[:, 1]
     normals = compute_normals(tck, u_equal, resampled)
 
+    # Plot function
     # Verify total length and segment length agree
     # print(total_length)
     # coords = np.stack((x_smooth, y_smooth), axis=1)
@@ -255,8 +258,8 @@ def get_curve(mesh, ax_geom=None, ax_curv=None, reverse=False):
     arrow_dy = y_smooth[1] - y_smooth[0]
 
     if ax_geom is not None:
-        ax_geom.scatter(resampled[:, 0], resampled[:, 1], alpha=0.3)
-        ax_geom.plot(x_smooth, y_smooth, 'r.')
+        # ax_geom.scatter(resampled[:, 0], resampled[:, 1], alpha=0.3)
+        ax_geom.plot(x_smooth, y_smooth, 'r-', markersize=5, alpha=0.5)
         ax_geom.plot(x_smooth[0], y_smooth[0], 'o', color='green', markersize=8, label='Start')
         ax_geom.arrow(x_smooth[0], y_smooth[0], 50*arrow_dx, 50*arrow_dy,
                     head_width=2.0, head_length=3.0, fc='green', ec='green', length_includes_head=True)
@@ -294,6 +297,7 @@ def get_curve(mesh, ax_geom=None, ax_curv=None, reverse=False):
 
 x_key, y_key, k_key, z_key, l_key, n_key = get_curve(mesh_key)
 CONTOUR_ALLEN_KEY = {
+    'name': "allen_key",
     'xyz': np.column_stack((x_key, y_key, [z_key]*len(x_key))),
     'normals': np.column_stack((n_key, np.zeros(len(n_key)))),  # pad Z = 0
     'kappa': k_key,
@@ -302,6 +306,7 @@ CONTOUR_ALLEN_KEY = {
 
 x_wrench, y_wrench, k_wrench, z_wrench, l_wrench, n_wrench = get_curve(mesh_wrench)
 CONTOUR_WRENCH = {
+    'name': "wrench",
     'xyz': np.column_stack((x_wrench, y_wrench, [z_wrench]*len(x_wrench))),
     'normals': np.column_stack((n_wrench, np.zeros(len(n_wrench)))),
     'kappa': k_wrench,
@@ -310,16 +315,23 @@ CONTOUR_WRENCH = {
 
 x_jenga, y_jenga, k_jenga, z_jenga, l_jenga, n_jenga = get_curve(mesh_jenga, reverse=True)
 CONTOUR_JENGA = {
+    'name': "jenga",
     'xyz': np.column_stack((x_jenga, y_jenga, [z_jenga]*len(x_jenga))),
     'normals': np.column_stack((n_jenga, np.zeros(len(n_jenga)))),
     'kappa': k_jenga,
     'length': l_jenga
 }
 
-def export_contour_wrench_to_csv(contour_wrench, filename):
-    xyz = contour_wrench['xyz']       # shape: (N, 3)
-    normals = contour_wrench['normals']  # shape: (N, 3)
-    kappa = contour_wrench['kappa']   # shape: (N,)
+# all together
+CONTOUR_LIBRARY = {"allen_key": CONTOUR_ALLEN_KEY,
+                   "wrench":    CONTOUR_WRENCH,
+                   "jenga":     CONTOUR_JENGA,
+                   "jenga_6":   CONTOUR_JENGA}  #ad hoc duplication
+
+def export_contour_to_csv(contour, filename):
+    xyz = contour['xyz']       # shape: (N, 3)
+    normals = contour['normals']  # shape: (N, 3)
+    kappa = contour['kappa']   # shape: (N,)
 
     # Check that all arrays have the same length
     N = len(kappa)
@@ -344,4 +356,6 @@ if __name__ == "__main__":
 
     plt.tight_layout()
     plt.show()
-    export_contour_wrench_to_csv(CONTOUR_WRENCH, "wrench_contour.csv")
+    # export_contour_to_csv(CONTOUR_WRENCH, "contour_wrench.csv")
+    # export_contour_to_csv(CONTOUR_JENGA, "contour_jenga.csv")
+    # export_contour_to_csv(CONTOUR_ALLEN_KEY, "contour_allen_key.csv")
