@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation as R
 import pyswarms.single.global_best as gbest
 from shapely.geometry import LineString, Polygon
 
-from max_camera_localizer.process_stl import CONTOUR_JENGA, CONTOUR_WRENCH, CONTOUR_ALLEN_KEY
+from risl_camera_localizer.process_stl import CONTOUR_JENGA, CONTOUR_WRENCH, CONTOUR_ALLEN_KEY
 
 # region Math / geometry helpers
 def rot2(angle: float) -> np.ndarray:

@@ -15,13 +15,13 @@ rosbag2_bagfile_information:
       message_count: 9823
     - topic_metadata:
         name: /pusher_data_green
-        type: max_camera_msgs/msg/PusherInfo
+        type: risl_camera_msgs/msg/PusherInfo
         serialization_format: cdr
         offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
       message_count: 2109
     - topic_metadata:
         name: /pusher_data_yellow
-        type: max_camera_msgs/msg/PusherInfo
+        type: risl_camera_msgs/msg/PusherInfo
         serialization_format: cdr
         offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
       message_count: 1379

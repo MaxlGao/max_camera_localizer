@@ -3,14 +3,14 @@ import cv2.aruco as aruco
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial import cKDTree
-from max_camera_localizer.camera_selection import detect_available_cameras, select_camera
-from max_camera_localizer.localizer_bridge import LocalizerBridge
-from max_camera_localizer.geometric_functions import rvec_to_quat, transform_orientation_cam_to_world, transform_point_cam_to_world, \
+from risl_camera_localizer.camera_selection import detect_available_cameras, select_camera
+from risl_camera_localizer.localizer_bridge import LocalizerBridge
+from risl_camera_localizer.geometric_functions import rvec_to_quat, transform_orientation_cam_to_world, transform_point_cam_to_world, \
 transform_points_world_to_img, transform_point_world_to_cam
-from max_camera_localizer.detection_functions import detect_markers, detect_color_blobs, estimate_pose, \
+from risl_camera_localizer.detection_functions import detect_markers, detect_color_blobs, estimate_pose, \
     identify_objects_from_blobs, attempt_recovery_for_missing_objects
-from max_camera_localizer.object_frame_definitions import define_jenga_contour, hard_define_contour
-from max_camera_localizer.drawing_functions import draw_text, draw_object_lines, draw_wrench, draw_twist
+from risl_camera_localizer.object_frame_definitions import define_jenga_contour, hard_define_contour
+from risl_camera_localizer.drawing_functions import draw_text, draw_object_lines, draw_wrench, draw_twist
 import threading
 import rclpy
 import argparse
@@ -106,7 +106,7 @@ def main():
 
     talk = not args.suppress_prints
     if args.recommend_push == "lfd":
-        from max_camera_localizer.data_predict import predict_pusher_outputs
+        from risl_camera_localizer.data_predict import predict_pusher_outputs
 
     cap = cv2.VideoCapture(cam_id)
     if not cap.isOpened():

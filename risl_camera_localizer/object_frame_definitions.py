@@ -1,6 +1,6 @@
 from scipy.spatial.transform import Rotation as R
 import numpy as np
-from max_camera_localizer.process_stl import CONTOUR_ALLEN_KEY, CONTOUR_WRENCH, CONTOUR_JENGA
+from risl_camera_localizer.process_stl import CONTOUR_ALLEN_KEY, CONTOUR_WRENCH, CONTOUR_JENGA
 
 # Contours are:
     # 'xyz': np.array of shape (N, 3), rows in mm

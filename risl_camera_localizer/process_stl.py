@@ -10,7 +10,7 @@ import csv
 def trirotmat(angledeg, direction, point):
     return trimesh.transformations.rotation_matrix(angle=np.radians(angledeg), direction=direction, point=point)
 
-pkg_dir = get_package_share_directory("max_camera_localizer")
+pkg_dir = get_package_share_directory("risl_camera_localizer")
 stl_path_key = os.path.join(pkg_dir, "STL", "Allen Key.STL")
 stl_path_wrench = os.path.join(pkg_dir, "STL", "Wrench.STL")
 

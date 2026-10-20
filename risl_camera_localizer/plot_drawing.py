@@ -3,7 +3,7 @@ import os
 from typing import Callable, Dict, Tuple
 import numpy as np
 import pandas as pd
-from max_camera_localizer.process_stl import CONTOUR_LIBRARY
+from risl_camera_localizer.process_stl import CONTOUR_LIBRARY
 from matplotlib.ticker import FixedLocator, LogFormatterMathtext
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches

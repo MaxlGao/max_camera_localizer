@@ -2,11 +2,11 @@ import cv2
 import numpy as np
 from itertools import combinations
 from scipy.spatial.transform import Rotation as R
-from max_camera_localizer.camera_selection import detect_available_cameras, select_camera
-from max_camera_localizer.object_frame_definitions import define_body_frame_allen_key, define_body_frame_pliers
-from max_camera_localizer.aruco_pose_bridge import ArucoPoseBridge
-from max_camera_localizer.color_detection_functions import detect_blue_object_positions
-from max_camera_localizer.geometric_functions import transform_points_world_to_img, complete_triangle, pick_best_candidate
+from risl_camera_localizer.camera_selection import detect_available_cameras, select_camera
+from risl_camera_localizer.object_frame_definitions import define_body_frame_allen_key, define_body_frame_pliers
+from risl_camera_localizer.aruco_pose_bridge import ArucoPoseBridge
+from risl_camera_localizer.color_detection_functions import detect_blue_object_positions
+from risl_camera_localizer.geometric_functions import transform_points_world_to_img, complete_triangle, pick_best_candidate
 import threading
 import rclpy
 import argparse

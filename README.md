@@ -5,9 +5,9 @@ This is a ROS 2 Humble Package that outputs aruco tag position and orientation *
 # Setup
 Usage of this package will require the UR ROS 2 driver and cv2. 
 
-To install, place this repository in the src directory of your workspace. Also install the repository `max_camera_msgs` in the same location. The repository is [here](https://github.com/MaxlGao/max_camera_msgs). Then, build your workspace. 
+To install, place this repository in the src directory of your workspace. Also install the repository `risl_camera_msgs` in the same location. The repository is [here](https://github.com/MaxlGao/risl_camera_msgs). Then, build your workspace. 
 
-To run, first make sure a UR driver is running. Then, run `ros2 run max_camera_localizer localize` inside your workspace. 
+To run, first make sure a UR driver is running. Then, run `ros2 run risl_camera_localizer localize` inside your workspace. 
 
 A preview window will appear, picking one camera accessible to the system. Press ESC to select this camera, or press any other key to move onto the next camera. Once you select your camera, a more detailed window will appear marking detected objects and annotating details in the top left corner. If you know your camera ID and would like to skip this process, pass the additional arg `--camera-id [YOUR_ID]`. Be warned; USB cameras can change IDs between uses.  
 
@@ -22,23 +22,23 @@ The following commands assume your camera is ID 8. Please remove this argument b
 
 Run the following to display objects and any detected (yellow and green) pushers:
 
-`ros2 run max_camera_localizer localize --camera-id 8 --suppress-prints`
+`ros2 run risl_camera_localizer localize --camera-id 8 --suppress-prints`
 
 Run the following to display objects without pushers:
 
-`ros2 run max_camera_localizer localize --camera-id 8 --suppress-prints --no-pushers`
+`ros2 run risl_camera_localizer localize --camera-id 8 --suppress-prints --no-pushers`
 
 Run the following to display objects without pushers, while recommending pushes:
 
-`ros2 run max_camera_localizer localize --camera-id 8 --suppress-prints --no-pushers --recommend-push`
+`ros2 run risl_camera_localizer localize --camera-id 8 --suppress-prints --no-pushers --recommend-push`
 
 ## Workspace Structure:
 
 ```
 YOUR_ROS2_WORKSPACE/
 ├── src/
-│   └── max_camera_localizer/
-│       ├── max_camera_localizer/
+│   └── risl_camera_localizer/
+│       ├── risl_camera_localizer/
 │       │   ├── trash/
 │       │   │   └── [unused python files]
 │       │   ├── camera_selection.py
@@ -73,7 +73,7 @@ This script contains a variable `parent_folder` which references a rosbag direct
 
 ### `data_predict.py`
 
-This script contains `file_folder` and `data_files`. Both reference data files that appear in the package's share directory, which are copied from pusher_data in the `src/max_camera_localizer` folder. If swapping out this data for another set, please rebuild the package.
+This script contains `file_folder` and `data_files`. Both reference data files that appear in the package's share directory, which are copied from pusher_data in the `src/risl_camera_localizer` folder. If swapping out this data for another set, please rebuild the package.
 
 The script assumes the data files are structured as follows:
 

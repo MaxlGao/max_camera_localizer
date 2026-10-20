@@ -9,7 +9,7 @@ import rclpy.serialization
 from rosidl_runtime_py.utilities import get_message
 
 from geometry_msgs.msg import PoseStamped
-from max_camera_msgs.msg import PusherInfo
+from risl_camera_msgs.msg import PusherInfo
 from scipy.spatial.transform import Rotation as R
 
 

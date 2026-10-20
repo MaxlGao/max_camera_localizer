@@ -4,7 +4,7 @@ import pandas as pd
 import os
 from ament_index_python.packages import get_package_share_directory
 
-file_folder = get_package_share_directory("max_camera_localizer")
+file_folder = get_package_share_directory("risl_camera_localizer")
 file_folder = os.path.join(file_folder, "pusher_data")
 
 # Load the uploaded CSV file

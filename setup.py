@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 from glob import glob
 import os
 
-package_name = 'max_camera_localizer'
+package_name = 'risl_camera_localizer'
 
 data_files = []
 for dirpath, dirnames, filenames in os.walk(os.path.join('pusher_data')):
@@ -31,9 +31,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'localize = max_camera_localizer.merged_localization:main',
-            'allocate = max_camera_localizer.control_allocation_node:main',
-            'test = max_camera_localizer.test_camera:main'
+            'localize = risl_camera_localizer.merged_localization:main',
+            'allocate = risl_camera_localizer.control_allocation_node:main',
+            'test = risl_camera_localizer.test_camera:main'
         ],
     },
 )

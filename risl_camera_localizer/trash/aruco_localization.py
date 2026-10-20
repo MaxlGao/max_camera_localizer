@@ -2,10 +2,10 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-from max_camera_localizer.camera_selection import detect_available_cameras, select_camera
-from max_camera_localizer.aruco_pose_bridge import ArucoPoseBridge
-from max_camera_localizer.geometric_functions import rvec_to_quat, quat_to_rvec, transform_orientation_cam_to_world, transform_point_cam_to_world, slerp_quat
-from max_camera_localizer.kalman_functions import QuaternionKalman
+from risl_camera_localizer.camera_selection import detect_available_cameras, select_camera
+from risl_camera_localizer.aruco_pose_bridge import ArucoPoseBridge
+from risl_camera_localizer.geometric_functions import rvec_to_quat, quat_to_rvec, transform_orientation_cam_to_world, transform_point_cam_to_world, slerp_quat
+from risl_camera_localizer.kalman_functions import QuaternionKalman
 import threading
 import rclpy
 import argparse

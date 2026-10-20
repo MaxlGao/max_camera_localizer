@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from max_camera_localizer.geometric_functions import rvec_to_quat, quat_to_rvec
+from risl_camera_localizer.geometric_functions import rvec_to_quat, quat_to_rvec
 from scipy.spatial.distance import cdist
 
 class QuaternionKalman:

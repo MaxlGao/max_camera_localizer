@@ -3,11 +3,11 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, Pose, TwistStamped, Twist, Vector3Stamped, PointStamped, Point, PolygonStamped
 from std_msgs.msg import Header, ColorRGBA, Int32, Float32MultiArray, String, Bool
-from max_camera_msgs.msg import PusherInfo
+from risl_camera_msgs.msg import PusherInfo
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 import threading
-from max_camera_localizer.process_stl import CONTOUR_LIBRARY
+from risl_camera_localizer.process_stl import CONTOUR_LIBRARY
 import time
 
 # It's the freakin Bifrost at this point

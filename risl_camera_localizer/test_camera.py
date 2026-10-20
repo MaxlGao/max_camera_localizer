@@ -1,5 +1,5 @@
 import cv2
-from max_camera_localizer.camera_selection import detect_available_cameras, select_camera
+from risl_camera_localizer.camera_selection import detect_available_cameras, select_camera
 import argparse
 
 
