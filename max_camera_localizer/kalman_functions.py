@@ -4,11 +4,13 @@ from max_camera_localizer.geometric_functions import rvec_to_quat, quat_to_rvec
 from scipy.spatial.distance import cdist
 
 class QuaternionKalman:
-    def __init__(self):
+    def __init__(self, dt=0.067):
         # 10 states: [x, y, z, qx, qy, qz, qw, vx, vy, vz]
         self.kf = cv2.KalmanFilter(10, 7)
-
-        dt = 1
+        
+        # dt should match your actual camera framerate. Default 0.067s = 15Hz
+        # If you have 30 FPS, use dt=0.033; for 60 FPS use dt=0.0167
+        self.dt = dt
 
         # A: Transition matrix (10x10)
         self.kf.transitionMatrix = np.eye(10, dtype=np.float32)
@@ -22,25 +24,29 @@ class QuaternionKalman:
         # Process noise covariance (Q). Lower Values = More Inertia
         self.kf.processNoiseCov = np.eye(10, dtype=np.float32) * 1e-6
         for i in range(3):   # x, y, z
-            self.kf.processNoiseCov[i, i] = 1e-4
+            self.kf.processNoiseCov[i, i] = 1e-5
         for i in range(3, 7):  # quaternion x, y, z, w
-            self.kf.processNoiseCov[i, i] = 1e-3
+            self.kf.processNoiseCov[i, i] = 1e-1
         for i in range(7, 10):  # vx, vy, vz
-            self.kf.processNoiseCov[i, i] = 1e-4
+            self.kf.processNoiseCov[i, i] = 1e-1
         
 
         # Measurement noise covariance (R). Lower Values = More Trust = You have good cameras
         self.kf.measurementNoiseCov = np.eye(7, dtype=np.float32)
         for i in range(3):   # position
-            self.kf.measurementNoiseCov[i, i] = 1e-4
+            self.kf.measurementNoiseCov[i, i] = 1e0
         for i in range(3, 7):  # quaternion
-            self.kf.measurementNoiseCov[i, i] = 1e-4
+            self.kf.measurementNoiseCov[i, i] = 1e0
         
         self.kf.errorCovPost = np.eye(10, dtype=np.float32)
 
         # Initial state
         self.kf.statePost = np.zeros((10, 1), dtype=np.float32)
         self.kf.statePost[3:7] = np.array([[0], [0], [0], [1]], dtype=np.float32)  # Identity quaternion
+        
+        # Drift detection: track max velocity to detect filter divergence
+        self.max_vel_threshold = 0.25  # m/s - warn if filter predicts motion faster than this
+        self.last_measurement = None
 
     def correct(self, tvec, rvec):
         quat = rvec_to_quat(rvec)
@@ -54,6 +60,19 @@ class QuaternionKalman:
         # Normalize quaternion to prevent drift
         pred_quat /= np.linalg.norm(pred_quat)
         pred_rvec = quat_to_rvec(pred_quat).flatten()
+        
+        # DRIFT DETECTION: Clamp velocity if it grows too large
+        # This prevents the Kalman filter from running away with small velocity biases
+        velocity = self.kf.statePost[7:10].flatten()
+        vel_norm = np.linalg.norm(velocity)
+        if vel_norm > self.max_vel_threshold:
+            # Velocity is unrealistic for a slowly-moving object - dampen it
+            damping = 0.5  # Scale down by 50%
+            self.kf.statePost[7:10] *= damping
+            if vel_norm > self.max_vel_threshold * 2:
+                # If WAY too fast, reset velocity to zero (filter is diverging)
+                self.kf.statePost[7:10] = 0
+                
         return pred_tvec, pred_rvec
     
 

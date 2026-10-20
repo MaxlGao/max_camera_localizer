@@ -118,3 +118,24 @@ def pick_best_candidate(candidates, prev_position):
     distances = [np.linalg.norm(candidate - prev_position) for candidate in candidates]
     best_index = np.argmin(distances)
     return candidates[best_index]
+
+def wrench_world_to_body(wrench_world: np.ndarray, body_theta: float):
+    """
+    Transforms a wrench from world frame to body frame. 
+    This probably shouldn't be used ever. But it's just a matter of negating body angle.
+    """
+    c, s = np.cos(-body_theta), np.sin(-body_theta)
+    rot = np.array([[c, -s], [s, c]])
+    wrench_body_lin = rot @ wrench_world[0:2, :]
+    wrench_body = np.vstack((wrench_body_lin, wrench_world[2, :]))
+    return wrench_body
+
+def wrench_body_to_world(wrench_body: np.ndarray, body_theta: float):
+    """
+    Transforms a wrench from body frame to world frame. 
+    """
+    c, s = np.cos(body_theta), np.sin(body_theta)
+    rot = np.array([[c, -s], [s, c]])
+    wrench_world_lin = rot @ wrench_body[0:2, :]
+    wrench_world = np.vstack((wrench_world_lin, wrench_body[2, :]))
+    return wrench_world

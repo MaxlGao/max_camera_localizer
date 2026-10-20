@@ -9,7 +9,7 @@ from max_camera_localizer.process_stl import CONTOUR_ALLEN_KEY, CONTOUR_WRENCH, 
     # 'length': float, total length of contour in mm
 
 def define_body_frame_allen_key(p1, p2, p3, width=0.005):
-    "Returns Origin, Quat, {Contact Points}"
+    "Returns Origin, Quat, {Contact Points}. p1-3 in mm"
     "Contact points as (idx, pos, normvec)"
     # Identify the side lengths
     dists = [
@@ -25,13 +25,16 @@ def define_body_frame_allen_key(p1, p2, p3, width=0.005):
     B = [pt for pt in [p1, p2, p3] if (pt is mid[1] or pt is mid[2]) and (pt is long[1] or pt is long[2])][0]
     C = [pt for pt in [p1, p2, p3] if pt is not A and pt is not B][0]  # Third point
 
-    origin = A
     x_axis = B - A
     x_axis /= np.linalg.norm(x_axis)
+    origin = A + 0.05 * x_axis
 
     to_c = C - origin
     y_axis = to_c - np.dot(to_c, x_axis) * x_axis
     y_axis /= np.linalg.norm(y_axis)
+
+    # Bump down origin
+    origin += 0.01 * y_axis
 
     z_axis = np.cross(x_axis, y_axis)
 
