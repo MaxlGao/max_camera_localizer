@@ -105,8 +105,6 @@ def main():
             return
 
     talk = not args.suppress_prints
-    if args.recommend_push == "lfd":
-        from risl_camera_localizer.data_predict import predict_pusher_outputs
 
     cap = cv2.VideoCapture(cam_id)
     if not cap.isOpened():
@@ -267,48 +265,7 @@ def main():
             # if "jenga" in name:
             #     name = "jenga" # generalize jenga (disabled right now)
             if name in ["allen_key", "wrench", "jenga_6"]:
-                # Bonus: For the ML test run, predict where the pushers should go
-                if args.recommend_push == "lfd":
-                    posex = obj["position"][0]
-                    posey = obj["position"][1]
-                    objquat = obj["quaternion"]
-                    objeuler = R.from_quat(objquat).as_euler('xyz')
-                    oriy = objeuler[2]
-                    prediction = predict_pusher_outputs(name, posex, posey, oriy, TARGET_POSES[name])
-                    index = prediction['predicted_index']
-                    print(index)
-
-                    # Draw predicted points (of the one or two given)
-                    recommended = []
-                    for ind in index:
-                        label = f"pusher recommended @ contour {ind}"
-                        pusher_point_world = obj['contour']['xyz'][ind]
-                        pusher_point_img = transform_points_world_to_img([pusher_point_world], cam_pos, cam_quat, CAMERA_MATRIX)
-                        pusher_point_normal = obj['contour']['normals'][ind]
-
-                        (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-                        cv2.rectangle(frame, (pusher_point_img[0][0] - 20, pusher_point_img[0][1] - h - 20 - 5), (pusher_point_img[0][0] + w - 20, pusher_point_img[0][1] - 20 + 5), (0, 0, 0), -1)
-                        cv2.putText(frame, label, (pusher_point_img[0][0] - 20, pusher_point_img[0][1] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-                        cv2.circle(frame, pusher_point_img[0], 5, color)
-
-                        recommended.append([pusher_point_world, pusher_point_normal])
-                    if len(recommended) == 1:
-                        # duplicate single pusher
-                        recommended.append(recommended[0])
-                    
-                    bridge_node.publish_recommended_contacts(recommended)
-
-                    # Draw target contour
-                    target_contour = hard_define_contour(TARGET_POSES[name][0], TARGET_POSES[name][1], name)
-                    contour_xyz = target_contour["xyz"]
-                    contour_img = transform_points_world_to_img(contour_xyz, cam_pos, cam_quat, CAMERA_MATRIX)
-                    contour_img = np.array(contour_img)
-                    contour_img.reshape((-1, 1, 2))
-                    contour_img = contour_img[::20]
-                    cv2.polylines(frame,[contour_img],False,color)
-
-                elif args.recommend_push == "pso" and len(push_point_xyxy) == 4:
+                if args.recommend_push == "pso" and len(push_point_xyxy) == 4:
                     pp_body_xy = np.array([[push_point_xyxy[0], push_point_xyxy[1]],
                                            [push_point_xyxy[2], push_point_xyxy[3]]])
                     # I'm ASSUMING the object in question is the one processed by PSO...
