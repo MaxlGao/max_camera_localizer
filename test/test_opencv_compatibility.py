@@ -16,19 +16,23 @@ CAMERA_MATRIX = np.array(
 @pytest.mark.parametrize('dictionary_id', [
     cv2.aruco.DICT_4X4_250, cv2.aruco.DICT_5X5_250,
 ])
-def test_marker_detection_and_id_filter(dictionary_id):
+@pytest.mark.parametrize('marker_ids', [(6, 7), (0, 249)])
+def test_marker_detection_and_id_filter(dictionary_id, marker_ids):
     """Detect generated markers using the actual Python ArUco bindings."""
     gray = np.full((400, 700), 255, dtype=np.uint8)
     dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
-    gray[100:300, 50:250] = cv2.aruco.generateImageMarker(dictionary, 6, 200)
-    gray[100:300, 450:650] = cv2.aruco.generateImageMarker(dictionary, 7, 200)
+    gray[100:300, 50:250] = cv2.aruco.generateImageMarker(dictionary, marker_ids[0], 200)
+    gray[100:300, 450:650] = cv2.aruco.generateImageMarker(dictionary, marker_ids[1], 200)
     frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     parameters = cv2.aruco.DetectorParameters()
     parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
     corners, ids = detection.detect_markers(
         frame, gray, {'test': dictionary_id}, parameters)
-    assert ids == [6]
+    assert set(ids) == set(marker_ids)
     assert corners[0].shape == (1, 4, 2)
+    _, filtered_ids = detection.detect_markers(
+        frame, gray, {'test': dictionary_id}, parameters, min_id=6, max_id=6)
+    assert filtered_ids == ([6] if 6 in marker_ids else [])
     blank = np.full_like(gray, 255)
     assert detection.detect_markers(
         frame, blank, {'test': dictionary_id}, parameters) == ([], [])

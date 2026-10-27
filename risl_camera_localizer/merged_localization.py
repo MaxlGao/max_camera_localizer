@@ -5,6 +5,7 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial import cKDTree
 from risl_camera_localizer.camera_selection import detect_available_cameras, select_camera, open_camera
 from risl_camera_localizer.localizer_bridge import LocalizerBridge
+from risl_camera_localizer.object_models import DEFAULT_OBJECT_NAMES
 from risl_camera_localizer.geometric_functions import rvec_to_quat, transform_orientation_cam_to_world, transform_point_cam_to_world, \
 transform_points_world_to_img, transform_point_world_to_cam
 from risl_camera_localizer.detection_functions import detect_markers, detect_color_blobs, estimate_pose, \
@@ -13,6 +14,7 @@ from risl_camera_localizer.object_frame_definitions import define_jenga_contour,
 from risl_camera_localizer.drawing_functions import draw_text, draw_object_lines, draw_wrench, draw_twist
 import threading
 import rclpy
+from rclpy.utilities import remove_ros_args
 import argparse
 
 c_width = 1280 # pix
@@ -67,7 +69,12 @@ def parse_args():
                         help="Prevents console prints. Otherwise, prints object positions in both camera frame and base frame.")
     parser.add_argument("--recommend-push", type=str, default="pso",
                         help="none = Don't recommend; pso (default) = allocation-based")
-    return parser.parse_args()
+    parser.add_argument("--pose-mode", choices=("planar", "3d"), default="planar",
+                        help="Planar fits world X/Y/yaw; 3d uses the original IPPE tracker.")
+    parser.add_argument("--marker-height", type=float, default=BLOCK_THICKNESS,
+                        help="Marker surface world Z in meters for planar mode (default: 0.014).")
+    # ROS launch appends its own arguments; leave those for rclpy.init().
+    return parser.parse_args(remove_ros_args()[1:])
 
 def pick_closest_blob(blobs, last_position):
     if not blobs:
@@ -78,6 +85,12 @@ def pick_closest_blob(blobs, last_position):
     distances = np.linalg.norm(blobs_np - last_position, axis=1)
     closest_idx = np.argmin(distances)
     return blobs[closest_idx]
+
+def select_allocation_object(objects, target_name):
+    """Keep allocation's single contour tied to a supported target."""
+    return next((obj for obj in objects
+                 if obj['name'] in DEFAULT_OBJECT_NAMES
+                 and (target_name is None or obj['name'] == target_name)), None)
 
 def main():
     args = parse_args()
@@ -149,7 +162,8 @@ def main():
         if camera_fps <= 0:  # Fallback if FPS query fails
             camera_fps = 15.0
         estimate_pose(frame, corners, ids, CAMERA_MATRIX, DIST_COEFFS, MARKER_SIZE,
-                    kalman_filters, marker_stabilities, last_seen_frames, bridge_node.frame_idx, cam_pos, cam_quat, talk, camera_fps=camera_fps)
+                    kalman_filters, marker_stabilities, last_seen_frames, bridge_node.frame_idx, cam_pos, cam_quat, talk, camera_fps=camera_fps,
+                    pose_mode=args.pose_mode, marker_height=args.marker_height)
 
         # After estimating pose, collect marker world positions
         for marker_id in kalman_filters:
@@ -196,9 +210,7 @@ def main():
         color = (255, 255, 0)
         for obj in identified_objects+identified_jenga:
             name = obj["name"]
-            # if "jenga" in name:
-            #     name = "jenga" # generalize jenga (disabled right now)
-            if name in ["allen_key", "wrench", "jenga_6"]:
+            if name in DEFAULT_OBJECT_NAMES and name == bridge_node.target_name:
                 if args.recommend_push == "pso" and len(push_point_xyxy) == 4:
                     pp_body_xy = np.array([[push_point_xyxy[0], push_point_xyxy[1]],
                                            [push_point_xyxy[2], push_point_xyxy[3]]])
@@ -260,8 +272,9 @@ def main():
         bridge_node.publish_camera_pose(cam_pos, cam_quat)
         bridge_node.publish_object_poses(identified_objects+identified_jenga)
         all_objects = identified_objects+identified_jenga
-        if all_objects:
-            selected_object = all_objects[0] # Critically, only one object is published
+        # Allocation accepts one contour; other localized tags must not replace it.
+        selected_object = select_allocation_object(all_objects, bridge_node.target_name)
+        if selected_object is not None:
             bridge_node.publish_contour(selected_object['name']) # only name info is needed; contour is in body frame
         draw_text(frame, cam_pos, cam_quat, identified_objects+identified_jenga, bridge_node.frame_idx, bridge_node.clock, ee_pos, ee_quat)
         draw_object_lines(frame, CAMERA_MATRIX, cam_pos, cam_quat, identified_objects+identified_jenga)

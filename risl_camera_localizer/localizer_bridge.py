@@ -8,6 +8,7 @@ from scipy.spatial.transform import Rotation as R
 import numpy as np
 import threading
 from risl_camera_localizer.process_stl import CONTOUR_LIBRARY
+from risl_camera_localizer.object_models import DEFAULT_OBJECT_NAMES, object_kind
 import time
 
 # It's the freakin Bifrost at this point
@@ -54,13 +55,11 @@ class LocalizerBridge(Node):
         # --- Object Twist Estimation ---
         self.push_active = False
         self.history_size = 10 # average over last n samples. Samples are about 0.1s.
-        self.object_poses_2D_history = {"wrench":[], "jenga_6":[], "allen_key":[]} # list of [x, y, theta]
-        self.v_b_world =               {"wrench":[], "jenga_6":[], "allen_key":[]} # Object twist in world frame
-        self.v_b_body  =               {"wrench":[], "jenga_6":[], "allen_key":[]} # Object twist in body frame
-        self.v_b_body_data =           {"wrench":[], "jenga_6":[], "allen_key":[]} # Object twist history, over a push, in body frame
-        self.v_b_body_avg =            {"wrench":   [0.0, 0.0, 0.0], 
-                                        "jenga_6":  [0.0, 0.0, 0.0], 
-                                        "allen_key":[0.0, 0.0, 0.0]} # Object twist average, over a push, in body frame
+        self.object_poses_2D_history = {} # list of [x, y, theta, time]
+        self.v_b_world = {} # Object twist in world frame
+        self.v_b_body = {} # Object twist in body frame
+        self.v_b_body_data = {} # Object twist history over a push, in body frame
+        self.v_b_body_avg = {} # Object twist average over a push, in body frame
 
         # --- Publishers ---
         self.cam_pose_publisher = self.create_publisher(PoseStamped, '/vision/camera_pose', 10)
@@ -69,15 +68,10 @@ class LocalizerBridge(Node):
         self.object_vel_world_publishers = {}
         self.object_vel_body_publishers = {}
         self.object_vel_avg_publishers = {}
-        for name in ("wrench", "jenga_6", "allen_key"):
-            pose_topic =      f"/vision/object_poses/{name}"
-            vel_world_topic = f"/vision/object_twists_world/{name}"
-            vel_body_topic =  f"/vision/object_twists_body/{name}"
-            vel_avg_topic =   f"/vision/object_twists_push_avg/{name}"
-            self.object_pose_publishers[name] =      self.create_publisher(PoseStamped,  pose_topic, 10)
-            self.object_vel_world_publishers[name] = self.create_publisher(TwistStamped, vel_world_topic, 10)
-            self.object_vel_body_publishers[name] =  self.create_publisher(TwistStamped, vel_body_topic, 10)
-            self.object_vel_avg_publishers[name] =   self.create_publisher(TwistStamped, vel_avg_topic, 10)
+        # Advertise allocation's expected topics before any camera detections.
+        # Additional Jenga instances are registered when first observed.
+        for name in DEFAULT_OBJECT_NAMES:
+            self.register_object(name)
         
         self.pusher_publishers = {}
         self.recommended_publishers = {"pusher_1_position": self.create_publisher(PointStamped, '/vision/recommended_pusher_1/position', 10), 
@@ -94,6 +88,24 @@ class LocalizerBridge(Node):
 
         self.buffer_advance_listener = self.create_subscription(String, 'buffer_advance_channel', self.buffer_advance, 10)
         self.buffer_advance_confirmer =   self.create_publisher(String, 'buffer_advance_channel', 10)
+
+    def register_object(self, name):
+        """Create independent tracking state and ROS publishers once per instance."""
+        if name in self.object_pose_publishers:
+            return
+        self.object_poses_2D_history[name] = []
+        self.v_b_world[name] = [0.0, 0.0, 0.0]
+        self.v_b_body[name] = [0.0, 0.0, 0.0]
+        self.v_b_body_data[name] = []
+        self.v_b_body_avg[name] = [0.0, 0.0, 0.0]
+        self.object_pose_publishers[name] = self.create_publisher(
+            PoseStamped, f'/vision/object_poses/{name}', 10)
+        self.object_vel_world_publishers[name] = self.create_publisher(
+            TwistStamped, f'/vision/object_twists_world/{name}', 10)
+        self.object_vel_body_publishers[name] = self.create_publisher(
+            TwistStamped, f'/vision/object_twists_body/{name}', 10)
+        self.object_vel_avg_publishers[name] = self.create_publisher(
+            TwistStamped, f'/vision/object_twists_push_avg/{name}', 10)
 
     def ee_pose_callback(self, msg: PoseStamped):
         with self.lock:
@@ -164,7 +176,6 @@ class LocalizerBridge(Node):
     # endregion
 
     def get_ee_pose(self):
-        # Why is this a function?
         return self.ee_position, self.ee_quat
 
     def get_camera_pose(self):
@@ -217,20 +228,7 @@ class LocalizerBridge(Node):
 
         for obj in object_data:
             name = obj["name"]
-            if name not in self.object_pose_publishers:
-                self.object_poses_2D_history[name] = []
-                self.v_b_world[name] = []
-                self.v_b_body[name] = []
-                self.v_b_body_data[name] = []
-                self.v_b_body_avg[name] = [0.0, 0.0, 0.0]
-                self.object_pose_publishers[name] = self.create_publisher(
-                    PoseStamped, f'/vision/object_poses/{name}', 10)
-                self.object_vel_world_publishers[name] = self.create_publisher(
-                    TwistStamped, f'/vision/object_twists_world/{name}', 10)
-                self.object_vel_body_publishers[name] = self.create_publisher(
-                    TwistStamped, f'/vision/object_twists_body/{name}', 10)
-                self.object_vel_avg_publishers[name] = self.create_publisher(
-                    TwistStamped, f'/vision/object_twists_push_avg/{name}', 10)
+            self.register_object(name)
             pos = obj["position"]
             quat = obj["quaternion"]
             # Save to list
@@ -351,7 +349,7 @@ class LocalizerBridge(Node):
         self.gripper_twist_desired_world.publish(twist_msg)
 
     def publish_contour(self, object_name):
-        contour = CONTOUR_LIBRARY[object_name]
+        contour = CONTOUR_LIBRARY[object_kind(object_name)]
         contour_xyz = contour['xyz'] / 1000
         contour_xy = contour_xyz[:,:2] # clip out z column
         contour_xy_lis = contour_xy.ravel().tolist() # Acquire list [x1, y1, x2, y2, ...]

@@ -27,6 +27,31 @@ To install, place this repository in the src directory of your workspace. Also i
 
 To run, first make sure a UR driver is running. Then, run `ros2 run risl_camera_localizer localize` inside your workspace. 
 
+Localization defaults to `--pose-mode planar` for blocks resting flat on the
+world XY plane. It fits world X, Y, and yaw against all four detected marker
+corners, fixes roll and pitch to zero, and fixes the marker surface height.
+Planar tracking smooths X/Y and yaw (including wraparound) without introducing
+tilt or advancing the state on repeated reads. A temporarily occluded marker
+holds its last world pose until the existing 15-frame timeout.
+
+Set `--marker-height` to the **absolute world Z of the marker surface in meters**.
+The default is `0.014` (14 mm block thickness, assuming the table is at world
+Z = 0). Include table elevation and marker mounting thickness if applicable:
+
+```bash
+ros2 run risl_camera_localizer localize --pose-mode planar --marker-height 0.014
+```
+
+All markers share this height. Planar mode assumes horizontal, unstacked blocks;
+a wrong height or camera-to-world transform biases X/Y. The existing camera
+intrinsics and distortion configuration still need calibration for best accuracy.
+For objects that tip, stack, or move in 3D, select the original IPPE and quaternion
+Kalman tracking behavior:
+
+```bash
+ros2 run risl_camera_localizer localize --pose-mode 3d
+```
+
 A preview window will appear for each accessible camera. Press any key to select
 the camera, or ESC to skip it. Skipping every camera cancels selection. Once you
 select your camera, a more detailed window will appear marking detected objects
@@ -41,6 +66,23 @@ refers to `/dev/videoN` consistently rather than using automatic backend
 selection. A physical camera can still expose multiple video device nodes.
 
 While running, this script will publish estimated camera pose (in the UR frame) in `/camera_pose` as well as poses of any detected objects in `/object_poses/[object_name]`. Poses are given as `PoseStamped`.  
+
+All detected ArUco IDs in the configured 4x4 and 5x5 dictionaries are tracked as
+`jenga_<id>`. Each confirmed instance gets its own pose topic at
+`/vision/object_poses/jenga_<id>` and twist topics under
+`/vision/object_twists_world/`, `/vision/object_twists_body/`, and
+`/vision/object_twists_push_avg/`. Pose and twist publishers for `jenga_6`,
+`wrench`, and `allen_key` are registered at node startup, even if those objects
+are out of frame, so allocation can subscribe immediately. Other Jenga
+instances are registered when first observed. Creating these publishers does
+not emit a pose for an unseen object. All Jenga instances share the same body geometry.
+IDs must be unique across the configured dictionaries because instance names
+use the numeric ID.
+
+Allocation continues to support Jenga 6 only (alongside the wrench and Allen
+key). Other Jenga IDs are localized without replacing allocation's single body
+contour. When `/robot/target_name` is set, the contour and push overlay use that
+target among the supported allocation objects.
 
 This script will doubly print its findings to console. If you wish, you may pass the argument `--suppress-prints` to not see this.
 
