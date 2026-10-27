@@ -22,7 +22,7 @@ setup(
         ('share/' + package_name + '/STL', glob('STL/*.STL')),
         *data_files
     ],
-    install_requires=['setuptools', 'cv2', 'scipy'],
+    install_requires=['setuptools', 'opencv-python>=4.7', 'scipy', 'numpy', 'trimesh'],
     zip_safe=True,
     maintainer='max',
     maintainer_email='max@todo.todo',

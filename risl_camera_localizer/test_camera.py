@@ -1,5 +1,5 @@
 import cv2
-from risl_camera_localizer.camera_selection import detect_available_cameras, select_camera
+from risl_camera_localizer.camera_selection import detect_available_cameras, select_camera, open_camera
 import argparse
 
 
@@ -22,7 +22,7 @@ def main():
         if cam_id is None:
             return
 
-    cap = cv2.VideoCapture(cam_id)
+    cap = open_camera(cam_id)
     if not cap.isOpened():
         return
 

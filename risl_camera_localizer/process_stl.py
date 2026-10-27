@@ -2,34 +2,17 @@ import trimesh
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
-import os
 from scipy.interpolate import splprep, splev, interp1d
-from ament_index_python.packages import get_package_share_directory
+from risl_camera_localizer.object_models import load_object_meshes
 import csv
 
 def trirotmat(angledeg, direction, point):
     return trimesh.transformations.rotation_matrix(angle=np.radians(angledeg), direction=direction, point=point)
 
-pkg_dir = get_package_share_directory("risl_camera_localizer")
-stl_path_key = os.path.join(pkg_dir, "STL", "Allen Key.STL")
-stl_path_wrench = os.path.join(pkg_dir, "STL", "Wrench.STL")
-
-mesh_key = trimesh.load_mesh(stl_path_key)
-origin_key = np.array([28.33, 0, 37]) # STL file doesn't preserve origin... probably should refactor other origin-setting.
-mesh_key.apply_translation(-origin_key)
-mesh_key.apply_transform(trirotmat(90, [1,0,0], [0,0,0]))
-mesh_key.apply_translation(np.array([-50.0, -10.0, 0])) # adjust origin again
-
-
-mesh_wrench = trimesh.load_mesh(stl_path_wrench)
-origin_wrench = np.array([49, 0, 26])
-mesh_wrench.apply_translation(-origin_wrench)
-mesh_wrench.apply_transform(trirotmat(90, [1,0,0], [0,0,0]))
-mesh_wrench.apply_transform(trirotmat(-90, [0,0,-1], [0,0,0])) # Rotate to match origin definition in object_frame_definitions. Very ad hoc.
-
-# No STL needed for the jenga block
-mesh_jenga = trimesh.creation.box(extents=[72, 24, 14])
-mesh_jenga.apply_translation([0, 0, -7])
+_object_meshes = load_object_meshes()
+mesh_key = _object_meshes['allen_key']
+mesh_wrench = _object_meshes['wrench']
+mesh_jenga = _object_meshes['jenga']
 
 
 def get_path(mesh):

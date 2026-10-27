@@ -52,7 +52,7 @@ def draw_text(frame, cam_pos, cam_quat, object_data, frame_idx, clock, ee_pos, e
         put_line(f"{name} rpy: ({euler[0]: 5.1f}, {euler[1]: 5.1f}, {euler[2]: 5.1f}) deg", (0, 255, 0))
         y += 5
 
-def draw_object_lines(frame, camera_matrix, cam_pos, cam_quat, identified_objects, nearest_pushers):
+def draw_object_lines(frame, camera_matrix, cam_pos, cam_quat, identified_objects):
     color_map = {
         "allen_key": (0, 255, 0),   # Green
         "wrench": (0, 0, 255),      # Red
@@ -120,20 +120,6 @@ def draw_object_lines(frame, camera_matrix, cam_pos, cam_quat, identified_object
         # cv2.rectangle(frame, (o[0] + offset[0], o[1] - h + offset[1] - 5), 
         #                      (o[0] + w + offset[0], o[1] + offset[1] + 5), (0, 0, 0), -1)
         # cv2.putText(frame, label, (o[0] + offset[0], o[1] + offset[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-
-
-    for nearest_pusher in nearest_pushers:
-        label = f"pusher_{nearest_pusher['pusher_name']} @ contour {nearest_pusher['local_contour_index']}"
-        pusher_point_world = nearest_pusher['pusher_location']
-        pusher_point_img = transform_points_world_to_img([pusher_point_world], cam_pos, cam_quat, camera_matrix)
-
-        (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        cv2.rectangle(frame, (pusher_point_img[0][0] - 20, pusher_point_img[0][1] - h - 20 - 5), (pusher_point_img[0][0] + w - 20, pusher_point_img[0][1] - 20 + 5), (0, 0, 0), -1)
-        cv2.putText(frame, label, (pusher_point_img[0][0] - 20, pusher_point_img[0][1] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, nearest_pusher["color"], 2)
-
-        contour_point_world = nearest_pusher['nearest_point']
-        contour_point_img = transform_points_world_to_img([contour_point_world], cam_pos, cam_quat, camera_matrix)
-        cv2.arrowedLine(frame, pusher_point_img[0], contour_point_img[0], nearest_pusher["color"], 2, tipLength=0.3)
 
     return frame
 

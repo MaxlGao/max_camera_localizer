@@ -3,7 +3,7 @@ import cv2.aruco as aruco
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial import cKDTree
-from risl_camera_localizer.camera_selection import detect_available_cameras, select_camera
+from risl_camera_localizer.camera_selection import detect_available_cameras, select_camera, open_camera
 from risl_camera_localizer.localizer_bridge import LocalizerBridge
 from risl_camera_localizer.geometric_functions import rvec_to_quat, transform_orientation_cam_to_world, transform_point_cam_to_world, \
 transform_points_world_to_img, transform_point_world_to_cam
@@ -29,7 +29,7 @@ CAMERA_MATRIX = np.array([[fx, 0, c_width / 2],
                           [0, fy, c_height / 2],
                           [0, 0, 1]], dtype=np.float32)
 DIST_COEFFS = np.zeros((5, 1), dtype=np.float32) # datasheet says <= 1.5%
-MARKER_SIZE = 0.019  # meters
+MARKER_SIZE = 0.019  # meters, square side length
 BLOCK_LENGTH = 0.072 # meters
 BLOCK_WIDTH = 0.024 # meters
 BLOCK_THICKNESS = 0.014 # meters
@@ -49,10 +49,6 @@ TARGET_POSES = {
 }
 
 blue_range = [np.array([100, 80, 80]), np.array([140, 255, 255])]
-green_range = [np.array([35, 80, 100]), np.array([75, 255, 255])]
-yellow_range = [np.array([15, 80, 60]), np.array([35, 255, 255])]
-
-pusher_distance_max = 0.030
 
 trackers = {}
 
@@ -69,10 +65,8 @@ def parse_args():
                         help="Camera device ID to use (e.g., 8). If not set, will scan and prompt.")
     parser.add_argument("--suppress-prints", action='store_true',
                         help="Prevents console prints. Otherwise, prints object positions in both camera frame and base frame.")
-    parser.add_argument("--no-pushers", action='store_true',
-                        help="Stops detecting yellow and green pushers")
     parser.add_argument("--recommend-push", type=str, default="pso",
-                        help="none = Don't recommend; lfd = Learning from Demonstration, pso (default) = allocation-based")
+                        help="none = Don't recommend; pso (default) = allocation-based")
     return parser.parse_args()
 
 def pick_closest_blob(blobs, last_position):
@@ -97,16 +91,16 @@ def main():
     if args.camera_id is not None:
         cam_id = args.camera_id
     else:        
-        available = detect_available_cameras()
+        available = detect_available_cameras(width=c_width, height=c_height)
         if not available:
             return
-        cam_id = select_camera(available)
+        cam_id = select_camera(available, width=c_width, height=c_height)
         if cam_id is None:
             return
 
     talk = not args.suppress_prints
 
-    cap = cv2.VideoCapture(cam_id)
+    cap = open_camera(cam_id, width=c_width, height=c_height)
     if not cap.isOpened():
         return
 
@@ -123,8 +117,6 @@ def main():
     parameters.errorCorrectionRate = 0.75
     parameters.detectInvertedMarker = True
     parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, c_width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, c_height)
     cap.set(cv2.CAP_PROP_AUTO_WB, 0)
     cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 4500)
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0)
@@ -132,8 +124,6 @@ def main():
     print("Press 'q' to quit.")
 
     detected_objects = []
-    last_pushers = {"green": None, "yellow": None}
-    # unconfirmed_blobs = {"green": None, "yellow": None}
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -183,62 +173,6 @@ def main():
         # Blue Blob Section
         world_points, _ = detect_color_blobs(frame, blue_range, (255,0,0), CAMERA_MATRIX, cam_pos, cam_quat)
         identified_objects = identify_objects_from_blobs(world_points, OBJECT_DICTS)
-
-        # Pusher section
-        pushers = {"green": None, "yellow": None}
-        nearest_pushers = []
-        if not args.no_pushers:
-            world_points_green, _ = detect_color_blobs(frame, green_range, (0, 255, 0), CAMERA_MATRIX, cam_pos, cam_quat, min_area=150, merge_threshold=0)
-            world_points_yellow, _ = detect_color_blobs(frame, yellow_range, (0, 255, 255), CAMERA_MATRIX, cam_pos, cam_quat, min_area=150, merge_threshold=0)
-
-            if world_points_green:
-                best_green = pick_closest_blob(world_points_green, last_pushers["green"])
-                pushers["green"] = (best_green, (0, 255, 0))
-                last_pushers["green"] = best_green
-
-            if world_points_yellow:
-                best_yellow = pick_closest_blob(world_points_yellow, last_pushers["yellow"])
-                pushers["yellow"] = (best_yellow, (0, 255, 255))
-                last_pushers["yellow"] = best_yellow
-            
-
-            # Working block for pusher-object interaction detection
-            # For now, gets nearest contour point to each pusher
-            all_xyz = []
-            all_kappa = []
-            all_meta = []  # to keep track of which object and index a point came from
-            if objects:  # At least one pusher detected
-                for obj_idx, obj in enumerate(objects):
-                    xyz = obj['contour']['xyz']
-                    kappa = obj['contour']['kappa']
-                    all_xyz.extend(xyz)
-                    all_kappa.extend(kappa)
-                    all_meta.extend([(obj_idx, i) for i in range(len(xyz))])
-
-                all_xyz = np.array(all_xyz)
-                all_kappa = np.array(all_kappa)
-
-                tree = cKDTree(all_xyz)
-
-                for color, pusher in pushers.items():
-                    if pusher is not None:
-                        pusher_pos, col = pusher
-                        distance, contour_idx = tree.query(pusher_pos)
-                        if distance > pusher_distance_max: # Must be within 30mm (accounts for differences in z)
-                            continue
-                        nearest_point = all_xyz[contour_idx]
-                        kappa_value = all_kappa[contour_idx]
-                        obj_index, local_contour_index = all_meta[contour_idx]
-                        nearest_pushers.append({
-                            'pusher_name': color,
-                            'frame_number': bridge_node.frame_idx,
-                            'color': col,
-                            'pusher_location': pusher_pos,
-                            'nearest_point': nearest_point,
-                            'kappa': kappa_value,
-                            'object_index': obj_index,
-                            'local_contour_index': local_contour_index
-                        })
 
         # Check for disappeared objects
         missing = False
@@ -325,13 +259,12 @@ def main():
         detected_objects = identified_objects.copy()
         bridge_node.publish_camera_pose(cam_pos, cam_quat)
         bridge_node.publish_object_poses(identified_objects+identified_jenga)
-        bridge_node.publish_contacts(nearest_pushers)
         all_objects = identified_objects+identified_jenga
         if all_objects:
             selected_object = all_objects[0] # Critically, only one object is published
             bridge_node.publish_contour(selected_object['name']) # only name info is needed; contour is in body frame
         draw_text(frame, cam_pos, cam_quat, identified_objects+identified_jenga, bridge_node.frame_idx, bridge_node.clock, ee_pos, ee_quat)
-        draw_object_lines(frame, CAMERA_MATRIX, cam_pos, cam_quat, identified_objects+identified_jenga, nearest_pushers)
+        draw_object_lines(frame, CAMERA_MATRIX, cam_pos, cam_quat, identified_objects+identified_jenga)
 
         # Draw gripper tip estimates (from gripper_utils via /gripper/tip_points)
         if getattr(bridge_node, "gripper_tip_points", None):

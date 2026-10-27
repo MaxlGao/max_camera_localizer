@@ -217,6 +217,20 @@ class LocalizerBridge(Node):
 
         for obj in object_data:
             name = obj["name"]
+            if name not in self.object_pose_publishers:
+                self.object_poses_2D_history[name] = []
+                self.v_b_world[name] = []
+                self.v_b_body[name] = []
+                self.v_b_body_data[name] = []
+                self.v_b_body_avg[name] = [0.0, 0.0, 0.0]
+                self.object_pose_publishers[name] = self.create_publisher(
+                    PoseStamped, f'/vision/object_poses/{name}', 10)
+                self.object_vel_world_publishers[name] = self.create_publisher(
+                    TwistStamped, f'/vision/object_twists_world/{name}', 10)
+                self.object_vel_body_publishers[name] = self.create_publisher(
+                    TwistStamped, f'/vision/object_twists_body/{name}', 10)
+                self.object_vel_avg_publishers[name] = self.create_publisher(
+                    TwistStamped, f'/vision/object_twists_push_avg/{name}', 10)
             pos = obj["position"]
             quat = obj["quaternion"]
             # Save to list
@@ -229,11 +243,6 @@ class LocalizerBridge(Node):
             p = Pose()
             p.position.x, p.position.y, p.position.z = pos
             p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w = quat
-
-            if name not in self.object_pose_publishers:
-                topic = f'/object_poses/{name}'
-                self.object_pose_publishers[name] = self.create_publisher(PoseStamped, topic, 10)
-                self.get_logger().info(f"Created publisher for object {name} -> {topic}")
 
             pose_msg = PoseStamped()
             pose_msg.header.stamp = now

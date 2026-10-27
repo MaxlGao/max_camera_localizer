@@ -3,13 +3,42 @@
 This is a ROS 2 Humble Package that outputs aruco tag position and orientation *in the robot base frame* using camera inputs and ROS 2 communication with the UR driver. 
 
 # Setup
-Usage of this package will require the UR ROS 2 driver and cv2. 
+Usage of this package will require the UR ROS 2 driver and OpenCV 4.7 or newer
+(`opencv-python`, imported as `cv2`). The marker detector uses the modern
+`cv2.aruco.ArucoDetector` API. Older OpenCV versions supplied by some ROS 2
+Humble systems do not provide this API.
+
+Install OpenCV into the Python environment used to run the ROS nodes:
+
+```bash
+python -m pip install 'opencv-python>=4.7'
+```
+
+Use the desktop package because the localizer uses `cv2.imshow`; headless
+packages cannot display its camera preview. Install only one OpenCV wheel
+variant in an environment, since they share the `cv2` namespace.
+
+Synthetic checks of marker detection, pose estimation, color blobs, Kalman
+filtering, and drawing passed with OpenCV 4.12.0 and 5.0.0 and NumPy 2.2.6.
+Camera capture, exposure controls, and GUI display still require a hardware
+check with the intended camera and desktop session.
 
 To install, place this repository in the src directory of your workspace. Also install the repository `risl_camera_msgs` in the same location. The repository is [here](https://github.com/MaxlGao/risl_camera_msgs). Then, build your workspace. 
 
 To run, first make sure a UR driver is running. Then, run `ros2 run risl_camera_localizer localize` inside your workspace. 
 
-A preview window will appear, picking one camera accessible to the system. Press ESC to select this camera, or press any other key to move onto the next camera. Once you select your camera, a more detailed window will appear marking detected objects and annotating details in the top left corner. If you know your camera ID and would like to skip this process, pass the additional arg `--camera-id [YOUR_ID]`. Be warned; USB cameras can change IDs between uses.  
+A preview window will appear for each accessible camera. Press any key to select
+the camera, or ESC to skip it. Skipping every camera cancels selection. Once you
+select your camera, a more detailed window will appear marking detected objects
+and annotating details in the top left corner. If you know your camera ID and
+would like to skip this process, pass `--camera-id [YOUR_ID]`. USB cameras can
+change IDs between uses.
+
+Discovery, preview, and localization request the same 1280x720 capture size.
+The preview shows the actual frame size, since a camera may negotiate a
+different resolution. On Linux, all three use V4L2 explicitly, so camera ID N
+refers to `/dev/videoN` consistently rather than using automatic backend
+selection. A physical camera can still expose multiple video device nodes.
 
 While running, this script will publish estimated camera pose (in the UR frame) in `/camera_pose` as well as poses of any detected objects in `/object_poses/[object_name]`. Poses are given as `PoseStamped`.  
 
