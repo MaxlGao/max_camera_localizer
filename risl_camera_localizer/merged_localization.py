@@ -69,8 +69,8 @@ def parse_args():
                         help="Prevents console prints. Otherwise, prints object positions in both camera frame and base frame.")
     parser.add_argument("--recommend-push", type=str, default="pso",
                         help="none = Don't recommend; pso (default) = allocation-based")
-    parser.add_argument("--pose-mode", choices=("planar", "3d"), default="planar",
-                        help="Planar fits world X/Y/yaw; 3d uses the original IPPE tracker.")
+    parser.add_argument("--pose-mode", choices=("planar", "planar-z", "3d"), default="planar-z",
+                        help="planar: X/Y/yaw; planar-z: X/Y/Z/yaw; 3d: original IPPE tracker.")
     parser.add_argument("--marker-height", type=float, default=BLOCK_THICKNESS,
                         help="Marker surface world Z in meters for planar mode (default: 0.014).")
     # ROS launch appends its own arguments; leave those for rclpy.init().
@@ -120,9 +120,10 @@ def main():
     parameters = aruco.DetectorParameters()
     # Relax detection thresholds so we keep more marginal markers under blur,
     # scale changes, and uneven lighting.
+    parameters.adaptiveThreshWinSizeMin = 13
     parameters.adaptiveThreshWinSizeMax = 53
     parameters.adaptiveThreshWinSizeStep = 4
-    parameters.minMarkerPerimeterRate = 0.015
+    parameters.minMarkerPerimeterRate = 0.05
     parameters.maxMarkerPerimeterRate = 6.0
     parameters.polygonalApproxAccuracyRate = 0.05
     parameters.minCornerDistanceRate = 0.02
@@ -157,7 +158,7 @@ def main():
         gripper_twist_body = bridge_node.v_g_body
 
         # Aruco Section
-        corners, ids = detect_markers(frame, gray, ARUCO_DICTS, parameters)
+        corners, ids = detect_markers(frame, gray, ARUCO_DICTS, parameters, max_id=50)
         camera_fps = cap.get(cv2.CAP_PROP_FPS)
         if camera_fps <= 0:  # Fallback if FPS query fails
             camera_fps = 15.0

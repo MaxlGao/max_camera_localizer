@@ -45,8 +45,22 @@ ros2 run risl_camera_localizer localize --pose-mode planar --marker-height 0.014
 All markers share this height. Planar mode assumes horizontal, unstacked blocks;
 a wrong height or camera-to-world transform biases X/Y. The existing camera
 intrinsics and distortion configuration still need calibration for best accuracy.
-For objects that tip, stack, or move in 3D, select the original IPPE and quaternion
-Kalman tracking behavior:
+For horizontal blocks at different heights, use `planar-z`. This intermediate
+mode fits world X, Y, Z, and yaw, keeping roll and pitch at zero:
+
+```bash
+ros2 run risl_camera_localizer localize --pose-mode planar-z
+```
+
+Each marker has its own estimated height, which is smoothed along with X/Y and
+yaw. `--marker-height` applies only to `planar`; `planar-z` recovers metric height
+from the configured marker size and camera calibration. Height is the marker
+surface's absolute world Z, not the block center or a discrete stack level.
+This mode supports horizontal stacked blocks, but does not infer support contacts
+or stacking relationships. Small tags and calibration error can cause Z noise.
+
+For objects that tip or require full orientation, select the original IPPE and
+quaternion Kalman tracking behavior:
 
 ```bash
 ros2 run risl_camera_localizer localize --pose-mode 3d

@@ -30,7 +30,7 @@ def detect_markers(frame, gray, aruco_dicts, parameters, max_id=None, min_id=Non
         aruco.drawDetectedMarkers(frame, corners, ids=None) # optional; ids being blue confuse blue-color localization
     return all_corners, all_ids
 
-def detect_color_blobs(frame, color_range, color, camera_matrix, cam_pos, cam_quat, height=0.01, min_area=120, merge_threshold=0.02):
+def detect_color_blobs(frame, color_range, color, camera_matrix, cam_pos, cam_quat, height=0.005, min_area=120, merge_threshold=0.02):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     
     # Define blue range in HSV
@@ -91,8 +91,8 @@ def detect_color_blobs(frame, color_range, color, camera_matrix, cam_pos, cam_qu
 def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                   kalman_filters, marker_stabilities, last_seen_frames, current_frame, cam_pos, cam_quat, talk=True, camera_fps=15.0,
                   pose_mode="3d", marker_height=0.014):
-    if pose_mode not in ("planar", "3d"):
-        raise ValueError("pose_mode must be planar or 3d")
+    if pose_mode not in ("planar", "planar-z", "3d"):
+        raise ValueError("pose_mode must be planar, planar-z, or 3d")
     max_movement = 0.05  # meters
     hold_required = 5    # frames it must persist
     half_size = marker_size / 2
@@ -105,8 +105,9 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
             # Initialize tracking state if this is a new marker
             if marker_id not in kalman_filters:
                 kalman_filters[marker_id] = (
-                    PlanarPoseTracker(marker_height, cam_pos, cam_quat)
-                    if pose_mode == "planar" else QuaternionKalman(dt=dt))
+                    PlanarPoseTracker(marker_height, cam_pos, cam_quat,
+                                      free_height=pose_mode == "planar-z")
+                    if pose_mode in ("planar", "planar-z") else QuaternionKalman(dt=dt))
                 marker_stabilities[marker_id] = {
                     "last_tvec": None,
                     "last_frame": -1,
@@ -129,14 +130,15 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
             success = False
             rvec = None
             tvec = None
-            if pose_mode == "planar":
+            if pose_mode in ("planar", "planar-z"):
                 # The camera may move with the robot; keep world tracking fixed
                 # while converting measurements and outputs with the latest TF.
                 kalman.cam_pos = np.asarray(cam_pos, dtype=float)
                 kalman.cam_quat = np.asarray(cam_quat, dtype=float)
                 planar_result = fit_planar_pose(
                     image_points, object_points, camera_matrix, dist_coeffs,
-                    cam_pos, cam_quat, marker_height)
+                    cam_pos, cam_quat, marker_height,
+                    free_height=pose_mode == "planar-z")
                 if planar_result is not None:
                     rvec, tvec = planar_result
                     success = True
@@ -199,7 +201,7 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                 if stability["hold_counter"] >= hold_required:
                     stability["confirmed"] = True
 
-                    if pose_mode == "planar":
+                    if pose_mode in ("planar", "planar-z"):
                         kalman.correct(tvec_flat, rvec)
                         blended_tvec, blended_rvec = kalman.predict()
                         blended_quat = rvec_to_quat(blended_rvec)
@@ -225,7 +227,7 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
 
 
     for marker_id, kalman in kalman_filters.items():
-        if pose_mode == "planar":
+        if pose_mode in ("planar", "planar-z"):
             kalman.cam_pos = np.asarray(cam_pos, dtype=float)
             kalman.cam_quat = np.asarray(cam_quat, dtype=float)
         stability = marker_stabilities[marker_id]
