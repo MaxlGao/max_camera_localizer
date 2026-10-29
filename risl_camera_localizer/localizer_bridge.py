@@ -26,7 +26,7 @@ class LocalizerBridge(Node):
         self.push_start_time = None
 
         # Offset of camera from EE (in EE frame)
-        self.cam_offset_position = np.array([-0.012, -0.038, -0.01])  # meters
+        self.cam_offset_position = np.array([-0.012, -0.038, -0.005])  # meters
         self.cam_offset_quat = np.array([0.0, 0.0, 0.0, 1.0])  # identity quaternion
 
         # --- Latest EE Pose (using values here if no ROS input - Home position) ---

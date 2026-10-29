@@ -23,6 +23,7 @@ setup(
         *data_files
     ],
     install_requires=['setuptools', 'opencv-python>=4.7', 'scipy', 'numpy', 'trimesh'],
+    extras_require={'realsense': ['pyrealsense2>=2.55']},
     zip_safe=True,
     maintainer='max',
     maintainer_email='max@todo.todo',

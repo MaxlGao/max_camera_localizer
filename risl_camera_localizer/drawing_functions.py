@@ -48,8 +48,11 @@ def draw_text(frame, cam_pos, cam_quat, object_data, frame_idx, clock, ee_pos, e
         quat = obj["quaternion"]
 
         euler = R.from_quat(quat).as_euler('xyz', degrees=True)
-        put_line(f"{name} xyz: ({1000*pos[0]:.1f}, {1000*pos[1]:.1f}, {1000*pos[2]:.1f}) mm", (0, 255, 0))
-        put_line(f"{name} rpy: ({euler[0]: 5.1f}, {euler[1]: 5.1f}, {euler[2]: 5.1f}) deg", (0, 255, 0))
+        remembered = obj.get('inferred', False)
+        label = f"{name} [{obj.get('visibility', 'remembered')}]" if remembered else name
+        color = (0, 200, 255) if remembered else (0, 255, 0)
+        put_line(f"{label} xyz: ({1000*pos[0]:.1f}, {1000*pos[1]:.1f}, {1000*pos[2]:.1f}) mm", color)
+        put_line(f"{name} rpy: ({euler[0]: 5.1f}, {euler[1]: 5.1f}, {euler[2]: 5.1f}) deg", color)
         y += 5
 
 def draw_object_lines(frame, camera_matrix, cam_pos, cam_quat, identified_objects):
@@ -86,13 +89,16 @@ def draw_object_lines(frame, camera_matrix, cam_pos, cam_quat, identified_object
 
         axes_image = transform_points_world_to_img(axes_world, cam_pos, cam_quat, camera_matrix)
 
-        o, x, y, z = axes_image
-        if o and x:
-            cv2.arrowedLine(frame, o, x, (0, 0, 255), 2, tipLength=0.3)  # X: Red
-        if o and y:
-            cv2.arrowedLine(frame, o, y, (0, 255, 0), 2, tipLength=0.3)  # Y: Green
-        if o and z:
-            cv2.arrowedLine(frame, o, z, (255, 0, 0), 2, tipLength=0.3)  # Z: Blue
+        # Remembered objects may be off-screen or behind the camera, so
+        # projection may omit one or more axis points.
+        if len(axes_image) == 4:
+            o, x, y, z = axes_image
+            if o and x:
+                cv2.arrowedLine(frame, o, x, (0, 0, 255), 2, tipLength=0.3)  # X: Red
+            if o and y:
+                cv2.arrowedLine(frame, o, y, (0, 255, 0), 2, tipLength=0.3)  # Y: Green
+            if o and z:
+                cv2.arrowedLine(frame, o, z, (255, 0, 0), 2, tipLength=0.3)  # Z: Blue
 
         # Draw contact points
         # contact_points = obj["contacts"]
@@ -108,10 +114,10 @@ def draw_object_lines(frame, camera_matrix, cam_pos, cam_quat, identified_object
         contour = obj["contour"]
         contour_xyz = contour["xyz"]
         contour_img = transform_points_world_to_img(contour_xyz, cam_pos, cam_quat, camera_matrix)
-        contour_img = np.array(contour_img)
-        contour_img.reshape((-1, 1, 2))
-        contour_img = contour_img[::20]
-        cv2.polylines(frame,[contour_img],False,color)
+        if len(contour_img) >= 2:
+            contour_img = np.asarray(contour_img, dtype=np.int32).reshape((-1, 1, 2))
+            contour_img = np.ascontiguousarray(contour_img[::20])
+            cv2.polylines(frame, [contour_img], False, color)
 
         # Draw label with background
         # label = f"{name}"

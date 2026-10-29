@@ -68,8 +68,8 @@ def test_color_blob_detection():
     world, image = detection.detect_color_blobs(
         frame, [np.array([100, 80, 80]), np.array([140, 255, 255])],
         (255, 0, 0), CAMERA_MATRIX, np.array([0., 0., -.5]),
-        [0., 0., 0., 1.])
-    np.testing.assert_allclose(world, [[0., 0., .01]], atol=1e-6)
+        [0., 0., 0., 1.], height=.005)
+    np.testing.assert_allclose(world, [[0., 0., .005]], atol=1e-6)
     # The projection helper truncates floating point coordinates to pixels.
     np.testing.assert_allclose(image, [(320, 240)], atol=1)
 

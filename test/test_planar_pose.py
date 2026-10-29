@@ -100,12 +100,13 @@ def test_planar_mode_through_detection_and_occlusion(monkeypatch):
 
 @pytest.mark.parametrize('pose_mode', ['planar-z', '3d'])
 def test_cli_defaults_and_3d_selection(monkeypatch, pose_mode):
-    """The app defaults to planar while 3D remains explicitly selectable."""
+    """The app defaults to planar-z while 3D remains explicitly selectable."""
     from risl_camera_localizer import merged_localization as app
 
     monkeypatch.setattr(app, 'remove_ros_args', lambda: ['localize'])
     args = app.parse_args()
-    assert args.pose_mode == 'planar'
+    assert args.pose_mode == 'planar-z'
+    assert args.camera_backend == 'realsense'
     assert args.marker_height == HEIGHT
     monkeypatch.setattr(app, 'remove_ros_args', lambda: [
         'localize', '--pose-mode', pose_mode, '--marker-height', '0.025'])

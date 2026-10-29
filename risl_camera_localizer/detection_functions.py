@@ -2,12 +2,35 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 from itertools import combinations
+from risl_camera_localizer.depth_pose import marker_depth_translation
 from scipy.spatial.transform import Rotation as R
 from risl_camera_localizer.geometric_functions import rvec_to_quat, transform_orientation_cam_to_world, transform_point_cam_to_world
 from risl_camera_localizer.kalman_functions import QuaternionKalman
 from risl_camera_localizer.planar_pose import fit_planar_pose, PlanarPoseTracker
 from risl_camera_localizer.geometric_functions import transform_points_world_to_img, slerp_quat, quat_to_rvec, complete_triangle, pick_best_candidate
 from risl_camera_localizer.object_frame_definitions import define_body_frame_allen_key, define_body_frame_wrench
+
+
+def _display_vector(values, decimals=1, scale=1.):
+    """Format console values without changing measurement precision."""
+    return '(' + ','.join(f'{float(v) * scale:.{decimals}f}'
+                          for v in np.asarray(values).ravel()) + ')'
+
+
+def _display_depth(stability):
+    """Keep the depth source and useful rejection metrics on the pose line."""
+    info = stability.get('depth_diagnostics', {})
+    fields = [f"depth={stability['depth_source']}"]
+    if stability['depth_source'] == 'RGB fallback' and info.get('reason'):
+        fields.append(info['reason'])
+    if 'valid_fraction' in info:
+        fields.append(f"valid={info['valid_fraction']:.0%}")
+    depth = info.get('measured_z_m', info.get('median_depth_m'))
+    if depth is not None:
+        fields.append(f"z={depth * 1000:.1f}mm")
+    if 'plane_rms_m' in info:
+        fields.append(f"rms={info['plane_rms_m'] * 1000:.1f}mm")
+    return ' '.join(fields)
 
 def detect_markers(frame, gray, aruco_dicts, parameters, max_id=None, min_id=None):
     """Detect all marker IDs unless an explicit ID range is requested."""
@@ -27,10 +50,10 @@ def detect_markers(frame, gray, aruco_dicts, parameters, max_id=None, min_id=Non
             mask &= ids >= min_id
         all_corners.extend([c for c, m in zip(corners, mask) if m])
         all_ids.extend(ids[mask])
-        aruco.drawDetectedMarkers(frame, corners, ids=None) # optional; ids being blue confuse blue-color localization
+        # aruco.drawDetectedMarkers(frame, corners, ids=None) # optional; ids being blue confuse blue-color localization
     return all_corners, all_ids
 
-def detect_color_blobs(frame, color_range, color, camera_matrix, cam_pos, cam_quat, height=0.005, min_area=120, merge_threshold=0.02):
+def detect_color_blobs(frame, color_range, color, camera_matrix, cam_pos, cam_quat, height=0.0, min_area=120, merge_threshold=0.02):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     
     # Define blue range in HSV
@@ -90,7 +113,7 @@ def detect_color_blobs(frame, color_range, color, camera_matrix, cam_pos, cam_qu
 
 def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                   kalman_filters, marker_stabilities, last_seen_frames, current_frame, cam_pos, cam_quat, talk=True, camera_fps=15.0,
-                  pose_mode="3d", marker_height=0.014):
+                  pose_mode="3d", marker_height=0.014, depth_m=None, permanence=None):
     if pose_mode not in ("planar", "planar-z", "3d"):
         raise ValueError("pose_mode must be planar, planar-z, or 3d")
     max_movement = 0.05  # meters
@@ -98,12 +121,15 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
     half_size = marker_size / 2
     dt = 1.0 / camera_fps  # Convert FPS to seconds per frame
 
-    if corners and ids:
+    observations = {}
+    detected_ids = set(np.asarray(ids).ravel().astype(int)) if ids is not None else set()
+
+    if len(corners) and ids is not None and len(ids):
         for corner, marker_id in zip(corners, ids):
             marker_id = int(marker_id)
 
             # Initialize tracking state if this is a new marker
-            if marker_id not in kalman_filters:
+            if marker_id not in kalman_filters or marker_stabilities[marker_id].get("dropped", False):
                 kalman_filters[marker_id] = (
                     PlanarPoseTracker(marker_height, cam_pos, cam_quat,
                                       free_height=pose_mode == "planar-z")
@@ -185,7 +211,32 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                         useExtrinsicGuess=True,
                         flags=cv2.SOLVEPNP_ITERATIVE,
                     )
+            stability["depth_source"] = "fixed plane" if pose_mode == "planar" else "RGB fallback"
+            stability['depth_diagnostics'] = {}
+            if success and pose_mode != "planar":
+                measured = marker_depth_translation(
+                    depth_m, image_points, camera_matrix, tvec,
+                    diagnostics=stability['depth_diagnostics'])
+                if measured is not None:
+                    if pose_mode == "planar-z":
+                        # Keep the horizontal-block constraint, but measure the
+                        # surface height instead of inferring it from tag scale.
+                        world_height = transform_point_cam_to_world(measured, cam_pos, cam_quat)[2]
+                        result = fit_planar_pose(
+                            image_points, object_points, camera_matrix, dist_coeffs,
+                            cam_pos, cam_quat, world_height)
+                        if result is not None:
+                            rvec, tvec = result
+                            stability["depth_source"] = "RGB-D"
+                        else:
+                            stability['depth_diagnostics']['reason'] = 'horizontal fit failed'
+                    else:
+                        tvec = measured.reshape(3, 1)
+                        stability["depth_source"] = "RGB-D"
             if success:
+                observations[marker_id] = (
+                    transform_point_cam_to_world(np.asarray(tvec).reshape(3), cam_pos, cam_quat),
+                    transform_orientation_cam_to_world(rvec_to_quat(rvec), cam_quat))
                 tvec_flat = tvec.flatten()
                 distance = np.linalg.norm(tvec_flat - stability["last_tvec"]) if stability["last_tvec"] is not None else 0
                 movement_ok = distance < max_movement
@@ -219,12 +270,47 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                     # Convert to world frame
                     marker_pos_world = transform_point_cam_to_world(blended_tvec, cam_pos, cam_quat)
                     marker_quat_world = transform_orientation_cam_to_world(blended_quat, cam_quat)
+                    stability['world_position'] = np.asarray(marker_pos_world).copy()
+                    stability['world_quaternion'] = np.asarray(marker_quat_world).copy()
+                    stability['measurement_frame'] = current_frame
                     if talk:
-                        print(f"[{marker_id}] Confirmed: t={tvec_flat}, r={rvec.flatten()}")
-                        print(f"[{marker_id}] WORLD Pose:\n  Pos: {marker_pos_world}\n  Quat: {marker_quat_world}")
-                elif talk:
-                    print(f"[{marker_id}] Holding: t={tvec_flat}, hold={stability['hold_counter']}")
+                        print(f"[{marker_id}] OK cam_mm={_display_vector(tvec_flat, scale=1000)} "
+                              f"world_mm={_display_vector(marker_pos_world, scale=1000)} "
+                              f"q_xyzw={_display_vector(marker_quat_world, decimals=3)} | "
+                              f"{_display_depth(stability)}")
+                elif talk and (permanence is None or not stability["confirmed"]):
+                    print(f"[{marker_id}] HOLD {stability['hold_counter']}/{hold_required} "
+                          f"cam_mm={_display_vector(tvec_flat, scale=1000)} | "
+                          f"{_display_depth(stability)}")
 
+
+
+    if permanence is not None:
+        if frame is None:
+            raise ValueError('Visibility-aware permanence requires an image for its dimensions')
+        dropped = permanence.update(
+            marker_stabilities, observations, detected_ids, current_frame,
+            camera_matrix, dist_coeffs, frame.shape, cam_pos, cam_quat, marker_size)
+        for marker_id, kalman in kalman_filters.items():
+            if pose_mode in ("planar", "planar-z"):
+                kalman.cam_pos = np.asarray(cam_pos, dtype=float)
+                kalman.cam_quat = np.asarray(cam_quat, dtype=float)
+            state = marker_stabilities[marker_id]
+            if not talk:
+                continue
+            if marker_id in dropped:
+                print(f"[{marker_id}] DROP {state['visibility']}")
+            elif state['confirmed'] and last_seen_frames[marker_id] != current_frame:
+                status = state['visibility']
+                counter = (f" {state['visible_misses']}/{permanence.visible_miss_frames}"
+                           if status == 'visible' else '')
+                cover = f" by={state['occluders']}" if status == 'occluded' else ''
+                chain = state.get('occlusion_chain', [])
+                if len(chain) > 2:
+                    cover += ' chain=' + '>'.join(map(str, chain))
+                print(f"[{marker_id}] KEEP {status}{counter}{cover} "
+                      f"world_mm={_display_vector(state['world_position'], scale=1000)}")
+        return
 
     for marker_id, kalman in kalman_filters.items():
         if pose_mode in ("planar", "planar-z"):
@@ -235,7 +321,8 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
         if not stability["confirmed"]:
             continue
 
-        if current_frame - last_seen < 15:
+        frames_until_drop = 15
+        if current_frame - last_seen < frames_until_drop:
             pred_tvec, pred_rvec = kalman.predict()
             # cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, pred_rvec, pred_tvec, marker_size * 0.5)
             if not current_frame == last_seen:
@@ -244,8 +331,10 @@ def estimate_pose(frame, corners, ids, camera_matrix, dist_coeffs, marker_size,
                 marker_pos_world = transform_point_cam_to_world(pred_tvec, cam_pos, cam_quat)
                 marker_quat_world = transform_orientation_cam_to_world(pred_quat, cam_quat)
                 if talk:
-                    print(f"[{marker_id}] Ghost: t={pred_tvec}, r={pred_rvec}")
-                    print(f"[{marker_id}] GHOST WORLD Pose:\n  Pos: {marker_pos_world}\n  Quat: {marker_quat_world}")
+                    print(f"[{marker_id}] GHOST {current_frame - last_seen}/{frames_until_drop} "
+                          f"cam_mm={_display_vector(pred_tvec, scale=1000)} "
+                          f"world_mm={_display_vector(marker_pos_world, scale=1000)} "
+                          f"q_xyzw={_display_vector(marker_quat_world, decimals=3)}")
         else:
             stability["confirmed"] = False
 
